@@ -15,6 +15,7 @@ extern fn kbvu_is_app_bundle() callconv(.c) c_int;
 extern fn kbvu_menubar_start() callconv(.c) c_int;
 extern fn kbvu_menubar_pump() callconv(.c) void;
 extern fn kbvu_menubar_show_error(message: [*:0]const u8) callconv(.c) void;
+extern fn kbvu_menubar_set_keyboard_connected(connected: c_int) callconv(.c) void;
 extern fn kbvu_menubar_set_tick_context(context: ?*anyopaque) callconv(.c) void;
 extern fn kbvu_menubar_stop() callconv(.c) void;
 
@@ -41,8 +42,22 @@ const Options = struct {
 const MenuTrackingContext = struct {
     queue: *meter.SampleQueue,
     levels: *meter.Meter,
-    lights: *?keyboard_lights.Output,
-    render_failed: bool = false,
+    lights: *?keyboard_lights.Connection,
+    keyboard_status: keyboard_lights.Status = .waiting,
+    menubar: bool,
+
+    fn renderKeyboard(self: *MenuTrackingContext, reading: meter.MeterReading) void {
+        const status = if (self.lights.*) |*connection|
+            connection.render(reading)
+        else
+            return;
+        if (status == self.keyboard_status) return;
+
+        self.keyboard_status = status;
+        if (self.menubar) {
+            kbvu_menubar_set_keyboard_connected(if (status == .connected) 1 else 0);
+        }
+    }
 };
 
 const usage =
@@ -114,24 +129,9 @@ pub fn main(init: std.process.Init) !void {
     }
     defer if (capture) |active_capture| kbvu_capture_stop(active_capture);
 
-    var lights: ?keyboard_lights.Output = null;
-    if (options.keyboard) {
-        lights = keyboard_lights.Output.open() catch |err| {
-            std.debug.print("keyboard open error: {t}\n", .{err});
-            if (options.menubar) kbvu_menubar_show_error(
-                "The NuPhy Air75 V3 could not be opened. Connect it directly by USB and close NuPhyIO, then reopen Keyboard VU.",
-            );
-            return err;
-        };
-    }
-    defer if (lights) |*output| output.close();
-    if (lights) |*output| output.start() catch |err| {
-        std.debug.print("keyboard initialization error: {t}\n", .{err});
-        if (options.menubar) kbvu_menubar_show_error(
-            "The NuPhy Air75 V3 lighting could not be initialized. Confirm that the corrected kbvu firmware is installed and close NuPhyIO.",
-        );
-        return err;
-    };
+    var lights: ?keyboard_lights.Connection = if (options.keyboard) .{} else null;
+    defer if (lights) |*connection| connection.close();
+    if (options.menubar and options.keyboard) kbvu_menubar_set_keyboard_connected(0);
 
     const action: std.posix.Sigaction = .{
         .handler = .{ .handler = handleInterrupt },
@@ -160,6 +160,7 @@ pub fn main(init: std.process.Init) !void {
         .queue = &queue,
         .levels = &levels,
         .lights = &lights,
+        .menubar = options.menubar,
     };
     if (options.menubar) kbvu_menubar_set_tick_context(&menu_tracking_context);
     defer if (options.menubar) kbvu_menubar_set_tick_context(null);
@@ -183,13 +184,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         const current = levels.update(&queue, meter.display_interval_seconds);
-        if (lights) |*output| output.render(current) catch |err| {
-            std.debug.print("keyboard render error: {t}\n", .{err});
-            if (options.menubar) kbvu_menubar_show_error(
-                "The NuPhy Air75 V3 stopped accepting lighting updates. Check its USB connection and close NuPhyIO.",
-            );
-            return err;
-        };
+        menu_tracking_context.renderKeyboard(current);
         switch (options.output) {
             .none => {},
             .plain => try meter.writePlainFrame(stdout, current),
@@ -208,10 +203,6 @@ pub fn main(init: std.process.Init) !void {
             );
         }
     }
-
-    if (menu_tracking_context.render_failed) kbvu_menubar_show_error(
-        "The NuPhy Air75 V3 stopped accepting lighting updates. Check its USB connection and close NuPhyIO.",
-    );
 
     const dropped = queue.dropped_blocks.load(.monotonic);
     if (dropped != 0) {
@@ -275,11 +266,7 @@ export fn kbvu_menu_tracking_tick(raw_context: *anyopaque) callconv(.c) c_int {
         context.queue,
         meter.display_interval_seconds,
     );
-    if (context.lights.*) |*output| output.render(current) catch {
-        context.render_failed = true;
-        kbvu_request_stop();
-        return -1;
-    };
+    context.renderKeyboard(current);
     return 0;
 }
 

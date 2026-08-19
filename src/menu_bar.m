@@ -17,6 +17,7 @@ static void KBVUShowAlert(NSString *title, NSString *message,
 
 @interface KBVUMenuController : NSObject <NSMenuDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
+@property(nonatomic, strong) NSMenuItem *keyboardStatusItem;
 @property(nonatomic, strong) NSMenuItem *startAtLoginItem;
 @property(nonatomic, strong) NSTimer *trackingTimer;
 @property(nonatomic, assign) void *tickContext;
@@ -48,12 +49,12 @@ static void KBVUShowAlert(NSString *title, NSString *message,
     button.toolTip = @"Keyboard VU";
 
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Keyboard VU"];
-    NSMenuItem *status = [[NSMenuItem alloc]
-        initWithTitle:@"Keyboard VU is running"
+    _keyboardStatusItem = [[NSMenuItem alloc]
+        initWithTitle:@""
                action:nil
         keyEquivalent:@""];
-    status.enabled = NO;
-    [menu addItem:status];
+    _keyboardStatusItem.enabled = NO;
+    [menu addItem:_keyboardStatusItem];
     [menu addItem:[NSMenuItem separatorItem]];
 
     _startAtLoginItem = [[NSMenuItem alloc]
@@ -72,6 +73,7 @@ static void KBVUShowAlert(NSString *title, NSString *message,
     [menu addItem:quit];
     menu.delegate = self;
     _statusItem.menu = menu;
+    [self setKeyboardConnected:NO];
     [self updateStartAtLoginItem];
     return self;
 }
@@ -102,6 +104,24 @@ static void KBVUShowAlert(NSString *title, NSString *message,
         kbvu_menu_tracking_tick(self.tickContext) != 0) {
         [self.statusItem.menu cancelTracking];
     }
+}
+
+- (void)setKeyboardConnected:(BOOL)connected {
+    if (connected) {
+        self.keyboardStatusItem.title = @"NuPhy Air75 V3 connected";
+        self.keyboardStatusItem.image = nil;
+        self.keyboardStatusItem.toolTip = nil;
+        return;
+    }
+
+    self.keyboardStatusItem.title = @"NuPhy Air75 V3 disconnected — waiting…";
+    NSImage *warning =
+        [NSImage imageWithSystemSymbolName:@"exclamationmark.triangle"
+                  accessibilityDescription:@"Keyboard disconnected"];
+    warning.template = YES;
+    self.keyboardStatusItem.image = warning;
+    self.keyboardStatusItem.toolTip =
+        @"Reconnect the keyboard by USB; Keyboard VU will resume automatically";
 }
 
 - (void)updateStartAtLoginItem {
@@ -182,6 +202,10 @@ int kbvu_menubar_start(void) {
 
 void kbvu_menubar_set_tick_context(void *context) {
     controller.tickContext = context;
+}
+
+void kbvu_menubar_set_keyboard_connected(int connected) {
+    [controller setKeyboardConnected:connected != 0];
 }
 
 void kbvu_menubar_pump(void) {

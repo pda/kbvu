@@ -151,7 +151,9 @@ for automated checks.
 - `src/keyboard_lights.zig` maps those same stereo lengths and shared bass colour
   onto side indices `84…103` in reverse index order so each bar grows upward,
   selects private renderer mode 5, and restores the saved RGB table and lighting
-  state on exit.
+  state on exit. Its connection state retains that baseline across USB removal,
+  retries a missing keyboard once per second, and resumes output when the Air75
+  reappears.
 - `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, signal
   cleanup, and the opt-in plain/ANSI output selection. With `--keyboard`, this
   non-real-time loop also performs D8 writes; the Core Audio callback never
@@ -160,8 +162,9 @@ for automated checks.
   pump, and startup-error alerts. While its menu is open, a timer scheduled in
   AppKit's event-tracking run-loop mode invokes the same Zig meter/keyboard
   update at 20 Hz; HID therefore remains single-threaded and does not pause for
-  menu interaction. Opening the bundle with no arguments enables this UI and
-  keyboard output by default.
+  menu interaction. The menu's keyboard-status item changes between connected
+  and disconnected/waiting without presenting a modal error. Opening the bundle
+  with no arguments enables this UI and keyboard output by default.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
 

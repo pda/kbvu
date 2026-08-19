@@ -2,6 +2,67 @@ const std = @import("std");
 const keyboard = @import("keyboard.zig");
 const meter = @import("meter.zig");
 
+const retry_delay_updates = 20;
+
+pub const Status = enum {
+    waiting,
+    connected,
+};
+
+const SavedState = struct {
+    lighting: keyboard.LightingState,
+    colors: [keyboard.side_light_count]keyboard.Color,
+};
+
+pub const Connection = struct {
+    active: ?Output = null,
+    saved: ?SavedState = null,
+    retry_updates: u8 = 0,
+
+    pub fn render(self: *Connection, reading: meter.MeterReading) Status {
+        if (self.active) |*output| {
+            output.render(reading) catch {
+                self.saved = output.savedState();
+                output.abandon();
+                self.active = null;
+                self.retry_updates = retry_delay_updates;
+                return .waiting;
+            };
+            return .connected;
+        }
+
+        if (self.retry_updates != 0) {
+            self.retry_updates -= 1;
+            return .waiting;
+        }
+
+        self.active = Output.open() catch {
+            self.retry_updates = retry_delay_updates;
+            return .waiting;
+        };
+        const output = &self.active.?;
+        output.start(self.saved) catch {
+            output.abandon();
+            self.active = null;
+            self.retry_updates = retry_delay_updates;
+            return .waiting;
+        };
+        self.saved = output.savedState();
+        output.render(reading) catch {
+            output.abandon();
+            self.active = null;
+            self.retry_updates = retry_delay_updates;
+            return .waiting;
+        };
+        return .connected;
+    }
+
+    pub fn close(self: *Connection) void {
+        if (self.active) |*output| output.close();
+        self.active = null;
+    }
+};
+
 pub const Output = struct {
     device: keyboard.Keyboard,
     original_state: keyboard.LightingState = undefined,
@@ -12,22 +73,27 @@ pub const Output = struct {
         return .{ .device = try keyboard.Keyboard.open() };
     }
 
-    pub fn start(self: *Output) !void {
+    pub fn start(self: *Output, saved: ?SavedState) !void {
         self.device.start();
         if (try self.device.lightCount() != 104) return error.UnexpectedLightCount;
 
-        var state = try self.device.readLightingState(0);
-        if (state[9] == 5) {
-            // Recover after an interrupted run before establishing this run's
-            // baseline. Mode 4 was the keyboard's pre-kbvu stock mode.
-            state[9] = 4;
-            try self.device.setLightingStateVerified(0, state);
+        if (saved) |original| {
+            self.original_state = original.lighting;
+            self.original_colors = original.colors;
+        } else {
+            var state = try self.device.readLightingState(0);
+            if (state[9] == 5) {
+                // Recover after an interrupted run before establishing this
+                // run's baseline. Mode 4 was the pre-kbvu stock side mode.
+                state[9] = 4;
+                try self.device.setLightingStateVerified(0, state);
+            }
+            self.original_state = state;
+            try self.device.readColors(keyboard.side_light_first_index, &self.original_colors);
         }
-        self.original_state = state;
-        try self.device.readColors(keyboard.side_light_first_index, &self.original_colors);
         self.restore_needed = true;
 
-        var custom_state = state;
+        var custom_state = self.original_state;
         custom_state[0] = 21;
         custom_state[4] = 0;
         custom_state[9] = 5;
@@ -37,6 +103,19 @@ pub const Output = struct {
     pub fn render(self: *Output, reading: meter.MeterReading) !void {
         const colors = colorsForReading(reading);
         try self.device.setColors(keyboard.side_light_first_index, &colors);
+    }
+
+    fn savedState(self: *const Output) SavedState {
+        std.debug.assert(self.restore_needed);
+        return .{
+            .lighting = self.original_state,
+            .colors = self.original_colors,
+        };
+    }
+
+    fn abandon(self: *Output) void {
+        self.restore_needed = false;
+        self.device.close();
     }
 
     pub fn close(self: *Output) void {
