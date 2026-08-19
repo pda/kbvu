@@ -15,6 +15,7 @@ extern fn kbvu_is_app_bundle() callconv(.c) c_int;
 extern fn kbvu_menubar_start() callconv(.c) c_int;
 extern fn kbvu_menubar_pump() callconv(.c) void;
 extern fn kbvu_menubar_show_error(message: [*:0]const u8) callconv(.c) void;
+extern fn kbvu_menubar_set_tick_context(context: ?*anyopaque) callconv(.c) void;
 extern fn kbvu_menubar_stop() callconv(.c) void;
 
 const Source = enum {
@@ -35,6 +36,13 @@ const Options = struct {
     menubar: bool = false,
     frame_count: ?usize = null,
     launched_as_app: bool = false,
+};
+
+const MenuTrackingContext = struct {
+    queue: *meter.SampleQueue,
+    levels: *meter.Meter,
+    lights: *?keyboard_lights.Output,
+    render_failed: bool = false,
 };
 
 const usage =
@@ -148,6 +156,14 @@ pub fn main(init: std.process.Init) !void {
     };
 
     var levels = meter.Meter{};
+    var menu_tracking_context = MenuTrackingContext{
+        .queue = &queue,
+        .levels = &levels,
+        .lights = &lights,
+    };
+    if (options.menubar) kbvu_menubar_set_tick_context(&menu_tracking_context);
+    defer if (options.menubar) kbvu_menubar_set_tick_context(null);
+
     var frame_index: usize = 0;
     while (keep_running.load(.monotonic) and
         (options.frame_count == null or frame_index < options.frame_count.?))
@@ -192,6 +208,10 @@ pub fn main(init: std.process.Init) !void {
             );
         }
     }
+
+    if (menu_tracking_context.render_failed) kbvu_menubar_show_error(
+        "The NuPhy Air75 V3 stopped accepting lighting updates. Check its USB connection and close NuPhyIO.",
+    );
 
     const dropped = queue.dropped_blocks.load(.monotonic);
     if (dropped != 0) {
@@ -246,6 +266,21 @@ fn handleInterrupt(_: std.posix.SIG) callconv(.c) void {
 
 export fn kbvu_request_stop() callconv(.c) void {
     keep_running.store(false, .monotonic);
+}
+
+export fn kbvu_menu_tracking_tick(raw_context: *anyopaque) callconv(.c) c_int {
+    if (!keep_running.load(.monotonic)) return 1;
+    const context: *MenuTrackingContext = @ptrCast(@alignCast(raw_context));
+    const current = context.levels.update(
+        context.queue,
+        meter.display_interval_seconds,
+    );
+    if (context.lights.*) |*output| output.render(current) catch {
+        context.render_failed = true;
+        kbvu_request_stop();
+        return -1;
+    };
+    return 0;
 }
 
 fn printUsageError(message: []const u8) error{InvalidArguments} {

@@ -157,8 +157,11 @@ for automated checks.
   non-real-time loop also performs D8 writes; the Core Audio callback never
   touches HID.
 - `src/menu_bar.m` owns the AppKit status item, Quit action, nonblocking event
-  pump, and startup-error alerts. Opening the bundle with no arguments enables
-  this UI and keyboard output by default.
+  pump, and startup-error alerts. While its menu is open, a timer scheduled in
+  AppKit's event-tracking run-loop mode invokes the same Zig meter/keyboard
+  update at 20 Hz; HID therefore remains single-threaded and does not pause for
+  menu interaction. Opening the bundle with no arguments enables this UI and
+  keyboard output by default.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
 

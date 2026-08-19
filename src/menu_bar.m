@@ -2,6 +2,7 @@
 #import <ServiceManagement/ServiceManagement.h>
 
 extern void kbvu_request_stop(void);
+extern int kbvu_menu_tracking_tick(void *context);
 
 static void KBVUShowAlert(NSString *title, NSString *message,
                           NSAlertStyle style) {
@@ -17,6 +18,8 @@ static void KBVUShowAlert(NSString *title, NSString *message,
 @interface KBVUMenuController : NSObject <NSMenuDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSMenuItem *startAtLoginItem;
+@property(nonatomic, strong) NSTimer *trackingTimer;
+@property(nonatomic, assign) void *tickContext;
 @end
 
 @implementation KBVUMenuController
@@ -76,6 +79,29 @@ static void KBVUShowAlert(NSString *title, NSString *message,
 - (void)menuWillOpen:(NSMenu *)menu {
     (void)menu;
     [self updateStartAtLoginItem];
+    [self.trackingTimer invalidate];
+    self.trackingTimer =
+        [NSTimer timerWithTimeInterval:0.05
+                                target:self
+                              selector:@selector(trackingTimerFired:)
+                              userInfo:nil
+                               repeats:YES];
+    [[NSRunLoop currentRunLoop] addTimer:self.trackingTimer
+                                 forMode:NSEventTrackingRunLoopMode];
+}
+
+- (void)menuDidClose:(NSMenu *)menu {
+    (void)menu;
+    [self.trackingTimer invalidate];
+    self.trackingTimer = nil;
+}
+
+- (void)trackingTimerFired:(NSTimer *)timer {
+    (void)timer;
+    if (self.tickContext != NULL &&
+        kbvu_menu_tracking_tick(self.tickContext) != 0) {
+        [self.statusItem.menu cancelTracking];
+    }
 }
 
 - (void)updateStartAtLoginItem {
@@ -154,6 +180,10 @@ int kbvu_menubar_start(void) {
     return controller == nil ? -1 : 0;
 }
 
+void kbvu_menubar_set_tick_context(void *context) {
+    controller.tickContext = context;
+}
+
 void kbvu_menubar_pump(void) {
     @autoreleasepool {
         for (;;) {
@@ -183,6 +213,7 @@ void kbvu_menubar_stop(void) {
     if (controller == nil) {
         return;
     }
+    [controller.trackingTimer invalidate];
     [[NSStatusBar systemStatusBar] removeStatusItem:controller.statusItem];
     controller = nil;
 }
