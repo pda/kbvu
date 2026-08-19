@@ -2,10 +2,10 @@
 
 This document describes the exact firmware change for the NuPhy Air75 V3 ANSI
 on official firmware 1.0.16.6. The first hardware trial proved the renderer
-change but exposed a misidentified fourth edit; the corrected image documented
-here has been built and validated offline but has not yet been flashed. A wrong
-or non-booting image still carries real risk, although an Air75 V3-specific
-physical recovery path has been identified below.
+change but exposed a misidentified fourth edit. The corrected image documented
+here has now been flashed and passed exact host readback plus lighting-state
+restoration. Firmware modification still carries real risk, although an Air75
+V3-specific physical recovery path has been identified below.
 
 ## Intended contract
 
@@ -111,6 +111,23 @@ Cleanup restored the saved RGB values and backlight mode, but side mode remained
 and usable; the corrected fourth edit is needed both to restore a stock side
 mode and to make normal `kbvu` shutdown reversible.
 
+With fresh explicit approval, the corrected image was then flashed over the
+same normal updater and direct USB-C connection:
+
+- SHA-256 was locked to
+  `10df67aaf7d4841cd59340d08a9699e7973fe6b5d8c0fc6aefde992ef0129e7d`;
+- all 5,074 write blocks and all 5,074 verify blocks were acknowledged;
+- the keyboard rebooted as `19f5:1028` and answered `A1` with
+  `10 00 01 aa 06 00 49 49` immediately after flashing;
+- `D6` successfully changed the stranded private mode 5 back to stock mode 4;
+- every whole-zone and indexed demo pattern passed exact readback; and
+- after cleanup, a fresh process read back backlight mode 6, side mode 4, and
+  the original side RGB table.
+
+The corrected contract is therefore hardware-verified. The demo also recovers
+mode 5 to stock mode 4 before taking its baseline, so a previous interrupted
+run does not preserve the private mode indefinitely.
+
 ## Exact official Air75 updater protocol
 
 The Air100 capture below was initially only a lead. Static inspection of the
@@ -199,8 +216,8 @@ provides closely related but **Air100-only** evidence:
 
 Those results support the patch method and are now corroborated by both the
 official Air75 updater implementation and the first Air75 hardware trial above.
-That trial proves the renderer edits; the corrected restoration guard remains
-unflashed. Before an additional flash, retain the exact stock image and repair
-package, use the MacBook's direct USB-C connection that succeeded for both the
-official and first experimental updates, and obtain explicit approval for that
+The corrected Air75 image has since proved both the renderer edits and the
+restoration guard. Before any future flash, retain the exact stock image and
+repair package, use the MacBook's direct USB-C connection that succeeded for
+the official and experimental updates, and obtain explicit approval for that
 specific flash.

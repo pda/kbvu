@@ -49,7 +49,7 @@ pub fn main(init: std.process.Init) !void {
     const light_count = try device.lightCount();
     std.debug.print("Firmware light count: {d}\n", .{light_count});
 
-    const state = try device.readLightingState(0);
+    var state = try device.readLightingState(0);
     std.debug.print(
         "macOS profile: backlight mode={d}, side mode={d}, side brightness={d}/255\n",
         .{ state[0], state[9], state[10] },
@@ -64,6 +64,15 @@ pub fn main(init: std.process.Init) !void {
             .{},
         );
         return;
+    }
+
+    if (state[9] == 5) {
+        std.debug.print(
+            "Recovering private side mode 5 to the pre-test stock mode 4...\n",
+            .{},
+        );
+        state[9] = 4;
+        try device.setLightingStateVerified(0, state);
     }
 
     std.debug.print(

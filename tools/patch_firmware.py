@@ -76,7 +76,7 @@ def build(source: Path, destination: Path) -> None:
     print(f"wrote {destination} ({len(patched)} bytes)")
     print(f"sha256 {patched_digest}")
     print(f"changed {len(changed)} bytes at " + ", ".join(f"0x{x:05x}" for x in changed))
-    print("This image has not been flashed or hardware-tested.")
+    print("No device was opened; this command only created the image.")
 
 
 def main() -> None:

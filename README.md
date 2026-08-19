@@ -34,12 +34,13 @@ and has no host-frame mode.
 
 An approved first flash extended effect 21 to all 104 entries. Exact `D2`
 readback then passed for independent left/right bars, partial bars, and
-alternating side pixels. That proves the bars are host-addressable with three
-small renderer-bound edits. The first image's unrelated fourth edit was
-misidentified, and stock `D6` makes private side mode 5 impossible to exit. A
-corrected fourth edit has been prepared offline to make mode 5 reversible; it
-has not yet been flashed. See [the firmware patch notes](docs/firmware-patch.md)
-for the exact manifest, first trial, updater, and recovery evidence.
+alternating side pixels. That proved the bars are host-addressable with three
+small renderer-bound edits, but stock `D6` made private side mode 5 impossible
+to exit. A corrected fourth edit now makes mode 5 reversible. The corrected
+image was written and verified in full; the complete demo passed exact readback
+after every pattern, and a fresh probe confirmed restoration to backlight mode
+6 and stock side mode 4. See [the firmware patch notes](docs/firmware-patch.md)
+for the exact manifest, trial history, updater, and recovery evidence.
 
 ## Keyboard probe
 
@@ -68,7 +69,8 @@ state on exit or failure when running the corrected firmware.
 - [x] Build an offline, exact-image-checked firmware patch candidate that renders host RGB entries `84…103` without contacting the keyboard.
 - [x] Verify the exact Air75 updater protocol and physical recovery path without contacting the keyboard.
 - [x] With explicit approval, flash the first candidate and verify independent `D8`/`D2` control of all 20 side LEDs.
-- [ ] Flash the corrected, restorable candidate and visually verify the complete demo.
+- [x] Flash the corrected candidate and verify the complete demo plus stock-state restoration by exact readback.
+- [ ] Confirm visually that the displayed patterns match their descriptions.
 - [ ] Research macOS system-output capture and stereo level measurement.
 - [ ] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
