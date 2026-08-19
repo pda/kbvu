@@ -70,7 +70,7 @@ state on exit or failure when running the corrected firmware.
 - [x] Verify the exact Air75 updater protocol and physical recovery path without contacting the keyboard.
 - [x] With explicit approval, flash the first candidate and verify independent `D8`/`D2` control of all 20 side LEDs.
 - [x] Flash the corrected candidate and verify the complete demo plus stock-state restoration by exact readback.
-- [ ] Confirm visually that the displayed patterns match their descriptions.
+- [x] Confirm visually that the displayed patterns match their descriptions.
 - [ ] Research macOS system-output capture and stereo level measurement.
 - [ ] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.

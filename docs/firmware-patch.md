@@ -124,6 +124,9 @@ same normal updater and direct USB-C connection:
 - after cleanup, a fresh process read back backlight mode 6, side mode 4, and
   the original side RGB table.
 
+The user then observed a second run at one second per pattern and confirmed that
+the physical bars visually matched every description.
+
 The corrected contract is therefore hardware-verified. The demo also recovers
 mode 5 to stock mode 4 before taking its baseline, so a previous interrupted
 run does not preserve the private mode indefinitely.
