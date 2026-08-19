@@ -62,7 +62,7 @@ lighting state on exit or failure.
 - [x] Build an offline, exact-image-checked firmware patch candidate that renders host RGB entries `84…103` without contacting the keyboard.
 - [x] Verify the exact Air75 updater protocol and physical recovery path without contacting the keyboard.
 - [ ] With explicit approval, flash the candidate and visually verify independent control.
-- [x] Research macOS system-output capture and stereo level measurement.
+- [ ] Research macOS system-output capture and stereo level measurement.
 - [ ] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
 
