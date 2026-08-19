@@ -19,7 +19,7 @@ the side LEDs independently and at a useful refresh rate.
 ## Plan
 
 - [x] Record the project goal and exact connected keyboard model.
-- [ ] Collect documentation and open-source references for the Air75 V3 USB/HID protocol and side LEDs.
+- [x] Collect documentation and open-source references for the Air75 V3 USB/HID protocol and side LEDs.
 - [ ] Build a minimal Zig program that displays test patterns on both LED bars.
 - [ ] Research macOS system-output capture and stereo level measurement.
 - [ ] Build and verify a Zig terminal stereo VU meter using test audio.
