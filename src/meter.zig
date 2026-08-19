@@ -298,7 +298,7 @@ fn dbfsToSinePeak(dbfs: f64) f64 {
 pub fn colorForBass(bass_db: f64) Rgb {
     const cyan = Rgb{ .red = 51, .green = 199, .blue = 255 };
     const yellow = Rgb{ .red = 255, .green = 210, .blue = 63 };
-    const red = Rgb{ .red = 255, .green = 59, .blue = 48 };
+    const red = Rgb{ .red = 255, .green = 0, .blue = 0 };
     if (bass_db <= -20.0) return cyan;
     if (bass_db < -10.0) return interpolateColor(cyan, yellow, (bass_db + 20.0) / 10.0);
     if (bass_db < -4.0) return interpolateColor(yellow, red, (bass_db + 10.0) / 6.0);
@@ -449,7 +449,7 @@ test "bass color runs from cyan through yellow to red" {
     try std.testing.expectEqual(Rgb{ .red = 51, .green = 199, .blue = 255 }, colorForBass(-20));
     try std.testing.expectEqual(Rgb{ .red = 153, .green = 205, .blue = 159 }, colorForBass(-15));
     try std.testing.expectEqual(Rgb{ .red = 255, .green = 210, .blue = 63 }, colorForBass(-10));
-    try std.testing.expectEqual(Rgb{ .red = 255, .green = 59, .blue = 48 }, colorForBass(-4));
+    try std.testing.expectEqual(Rgb{ .red = 255, .green = 0, .blue = 0 }, colorForBass(-4));
 }
 
 test "plain renderer is deterministic and contains ten cells per channel" {
@@ -458,8 +458,8 @@ test "plain renderer is deterministic and contains ten cells per channel" {
     try writePlainFrame(&writer, .{ .left_dbfs = -6, .right_dbfs = -18, .bass_db = -3 });
 
     try std.testing.expectEqualStrings(
-        "L -6.0 dBFS ▪▪▪▪▪▪▪▪▪▫ bass 50.1% (-3.0 dB rel) rgb(255,59,48)\n" ++
-            "R -18.0 dBFS ▪▪▪▪▪▪▪▫▫▫ bass 50.1% (-3.0 dB rel) rgb(255,59,48)\n",
+        "L -6.0 dBFS ▪▪▪▪▪▪▪▪▪▫ bass 50.1% (-3.0 dB rel) rgb(255,0,0)\n" ++
+            "R -18.0 dBFS ▪▪▪▪▪▪▪▫▫▫ bass 50.1% (-3.0 dB rel) rgb(255,0,0)\n",
         writer.buffered(),
     );
 }
@@ -474,6 +474,6 @@ test "ANSI renderer uses exactly two terminal lines" {
     try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\n\x1b[2K\rR ") != null);
     try std.testing.expectEqual(
         @as(usize, 2),
-        std.mem.count(u8, writer.buffered(), "\x1b[38;2;255;59;48m"),
+        std.mem.count(u8, writer.buffered(), "\x1b[38;2;255;0;0m"),
     );
 }
