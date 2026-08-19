@@ -42,6 +42,55 @@ after every pattern, and a fresh probe confirmed restoration to backlight mode
 6 and stock side mode 4. See [the firmware patch notes](docs/firmware-patch.md)
 for the exact manifest, trial history, updater, and recovery evidence.
 
+The macOS audio half is implemented independently of the keyboard path. A
+first-party Core Audio process tap captures the global stereo output mix, and a
+Zig RMS meter renders two ten-cell Unicode/ANSI rows. The independent bar
+lengths show left/right volume, while their shared colour runs from cyan to red
+as the mix becomes more bass-heavy. It can therefore visualize Spotify and
+other application audio without a virtual loopback device. See
+[the audio research](docs/macos-audio.md) for the design and permission details.
+
+## Terminal stereo VU meter
+
+Build and exercise the deterministic stereo test source without requesting any
+macOS permission:
+
+```console
+zig build
+zig build test
+./zig-out/bin/kbvu-vu --source test --plain --frames 4
+```
+
+The plain mode emits numeric dBFS, low-frequency energy percentage/relative dB,
+RGB, and exactly ten cells for each channel, making both magnitude and colour
+suitable for tests and agent inspection. Its deterministic sequence includes
+bass, treble, and silence. Omit `--plain` for the compact live ANSI display:
+
+```text
+L ▪▪▪▪▪▪▪▪▪▫
+R ▪▪▪▪▪▪▪▫▫▫
+```
+
+The ANSI view uses 24-bit foreground colour on every filled `▪`: cyan means
+little energy below roughly 200 Hz, yellow means a mixed spectrum, and red means
+bass-heavy. Empty `▫` cells remain dim and neutral. Both rows use the same
+spectral colour so their lengths remain an unambiguous stereo level comparison.
+
+To meter live system output on macOS 14.2 or newer, use the app launcher from an
+interactive terminal:
+
+```console
+./zig-out/bin/kbvu-vu-live
+```
+
+The first run asks for **System Audio Recording Only** access. The launcher is
+important: it starts the signed `zig-out/kbvu-vu.app` through LaunchServices so
+TCC attributes the request to `kbvu-vu`, while routing ANSI output and Ctrl-C
+back to the terminal. Directly executing the app's nested binary makes the
+terminal application responsible for permission and is intentionally rejected.
+An ad-hoc signature is used when no Apple Development identity is available, so
+a changed rebuild may need permission to be granted again.
+
 ## Keyboard probe
 
 Build with Zig 0.16 or newer and close NuPhyIO before running:
@@ -71,8 +120,8 @@ state on exit or failure when running the corrected firmware.
 - [x] With explicit approval, flash the first candidate and verify independent `D8`/`D2` control of all 20 side LEDs.
 - [x] Flash the corrected candidate and verify the complete demo plus stock-state restoration by exact readback.
 - [x] Confirm visually that the displayed patterns match their descriptions.
-- [ ] Research macOS system-output capture and stereo level measurement.
-- [ ] Build and verify a Zig terminal stereo VU meter using test audio.
+- [x] Research macOS system-output capture and stereo level measurement.
+- [x] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
