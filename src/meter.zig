@@ -192,7 +192,7 @@ fn writeBar(writer: *std.Io.Writer, dbfs: f64, ansi: bool) !void {
                 "\x1b[2;37m";
             try writer.writeAll(color);
         }
-        try writer.writeAll(if (cell < filled) "█" else "░");
+        try writer.writeAll(if (cell < filled) "▪" else "▫");
     }
     if (ansi) try writer.writeAll("\x1b[0m");
 }
@@ -263,7 +263,7 @@ test "plain renderer is deterministic and contains ten cells per channel" {
     try writePlainFrame(&writer, .{ .left_dbfs = -6, .right_dbfs = -18 });
 
     try std.testing.expectEqualStrings(
-        "L -6.0 dBFS █████████░\nR -18.0 dBFS ███████░░░\n",
+        "L -6.0 dBFS ▪▪▪▪▪▪▪▪▪▫\nR -18.0 dBFS ▪▪▪▪▪▪▪▫▫▫\n",
         writer.buffered(),
     );
 }

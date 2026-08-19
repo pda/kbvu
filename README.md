@@ -57,8 +57,8 @@ it suitable for tests and agent inspection. Omit `--plain` for the compact live
 ANSI display:
 
 ```text
-L █████████░
-R ███████░░░
+L ▪▪▪▪▪▪▪▪▪▫
+R ▪▪▪▪▪▪▪▫▫▫
 ```
 
 To meter live system output on macOS 14.2 or newer, use the app launcher from an
