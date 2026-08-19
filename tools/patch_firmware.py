@@ -10,7 +10,7 @@ from pathlib import Path
 
 STOCK_SIZE = 284_112
 STOCK_SHA256 = "7fd339b0e22dff0843d6be7f8ac4a970c209b2362b49cc6babd60fcf3101642e"
-PATCHED_SHA256 = "2d95a6a163b10ea1398e7603e9d4b59d1b115c192cae63a890e07310e1c4ac14"
+PATCHED_SHA256 = "10df67aaf7d4841cd59340d08a9699e7973fe6b5d8c0fc6aefde992ef0129e7d"
 
 # Raw binary file offsets. Each edit changes only an RV32 immediate; no code is
 # inserted and instruction boundaries do not move.
@@ -20,9 +20,9 @@ PATCHES = (
     # Extend effect 21's overall limit and final-chunk clamp from 84 to 104.
     (0x0BBAA, bytes.fromhex("93 06 40 05"), bytes.fromhex("93 06 80 06")),
     (0x0BBCE, bytes.fromhex("93 0A 40 05"), bytes.fromhex("93 0A 80 06")),
-    # Permit side mode 5. The existing side dispatcher has handlers only for
-    # 0..4, so mode 5 leaves pixels 84..103 to effect 21.
-    (0x14A3E, bytes.fromhex("91 47"), bytes.fromhex("95 47")),
+    # Let D6 replace private side mode 5 with a stock mode during restoration.
+    # D6 already accepts mode 5 while the current mode is in the stock range.
+    (0x0DE1A, bytes.fromhex("11 47"), bytes.fromhex("15 47")),
 )
 
 

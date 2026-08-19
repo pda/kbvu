@@ -87,9 +87,10 @@ pub fn main(init: std.process.Init) !void {
     try showZonePattern(&device, "both bars dim white (individual-write baseline)", static_state, hold_ms);
 
     var custom_state = static_state;
-    custom_state[0] = 21; // Candidate D8 renderer, proven on the Air100 V3.
+    custom_state[0] = 21; // D8 custom-color renderer.
     custom_state[4] = 0; // Fixed-color mode.
-    std.debug.print("Enabling hidden custom-color effect 21 before D8 writes.\n", .{});
+    custom_state[9] = 5; // Private mode bypasses the stock side renderer.
+    std.debug.print("Enabling custom-color effect 21 and private side mode 5 before D8 writes.\n", .{});
     device.setLightingStateVerified(0, custom_state) catch |err| {
         if (err == error.VerificationFailed) {
             std.debug.print(

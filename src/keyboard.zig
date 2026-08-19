@@ -1,136 +1,13 @@
 const std = @import("std");
+const hid = @import("hid.zig");
 
-// Direct declarations keep Zig's C translator away from unrelated Mach and
-// blocks declarations in the macOS SDK. These signatures mirror CoreFoundation
-// and IOHIDLib's public C APIs.
-const c = struct {
-    pub const CFIndex = isize;
-    pub const CFAllocator = opaque {};
-    pub const CFAllocatorRef = ?*const CFAllocator;
-    pub const CFString = opaque {};
-    pub const CFStringRef = *const CFString;
-    pub const CFMutableDictionary = opaque {};
-    pub const CFMutableDictionaryRef = *CFMutableDictionary;
-    pub const CFSet = opaque {};
-    pub const CFSetRef = *const CFSet;
-    pub const CFRunLoop = opaque {};
-    pub const CFRunLoopRef = *CFRunLoop;
-    pub const IOHIDManager = opaque {};
-    pub const IOHIDManagerRef = *IOHIDManager;
-    pub const IOHIDDevice = opaque {};
-    pub const IOHIDDeviceRef = *IOHIDDevice;
-    pub const IOReturn = i32;
-    pub const IOHIDReportType = c_uint;
-    pub const IOHIDReportCallback = *const fn (
-        context: ?*anyopaque,
-        result: IOReturn,
-        sender: ?*anyopaque,
-        report_type: IOHIDReportType,
-        report_id: u32,
-        report: [*c]u8,
-        report_length: CFIndex,
-    ) callconv(.c) void;
-
-    pub const kCFStringEncodingUTF8: u32 = 0x08000100;
-    pub const kCFNumberIntType: c_uint = 9;
-    pub const kIOHIDOptionsTypeNone: u32 = 0;
-    pub const kIOHIDReportTypeOutput: IOHIDReportType = 1;
-    pub const kIOReturnSuccess: IOReturn = 0;
-
-    pub extern const kCFAllocatorDefault: CFAllocatorRef;
-    pub extern const kCFRunLoopDefaultMode: CFStringRef;
-    // Only these symbols' addresses are passed; their private struct layouts
-    // are intentionally not represented here.
-    pub extern const kCFTypeDictionaryKeyCallBacks: u8;
-    pub extern const kCFTypeDictionaryValueCallBacks: u8;
-
-    pub extern fn CFRelease(value: *const anyopaque) void;
-    pub extern fn CFStringCreateWithCString(
-        allocator: CFAllocatorRef,
-        string: [*:0]const u8,
-        encoding: u32,
-    ) ?CFStringRef;
-    pub extern fn CFNumberCreate(
-        allocator: CFAllocatorRef,
-        number_type: c_uint,
-        value: *const anyopaque,
-    ) ?*const anyopaque;
-    pub extern fn CFNumberGetTypeID() usize;
-    pub extern fn CFNumberGetValue(
-        number: *const anyopaque,
-        number_type: c_uint,
-        value: *anyopaque,
-    ) u8;
-    pub extern fn CFGetTypeID(value: *const anyopaque) usize;
-    pub extern fn CFDictionaryCreateMutable(
-        allocator: CFAllocatorRef,
-        capacity: CFIndex,
-        key_callbacks: ?*const anyopaque,
-        value_callbacks: ?*const anyopaque,
-    ) ?CFMutableDictionaryRef;
-    pub extern fn CFDictionarySetValue(
-        dictionary: CFMutableDictionaryRef,
-        key: *const anyopaque,
-        value: *const anyopaque,
-    ) void;
-    pub extern fn CFSetGetCount(set: CFSetRef) CFIndex;
-    pub extern fn CFSetGetValues(set: CFSetRef, values: [*]?*const anyopaque) void;
-    pub extern fn CFRunLoopGetCurrent() CFRunLoopRef;
-    pub extern fn CFRunLoopRunInMode(
-        mode: CFStringRef,
-        seconds: f64,
-        return_after_source_handled: u8,
-    ) c_int;
-
-    pub extern fn IOHIDManagerCreate(allocator: CFAllocatorRef, options: u32) ?IOHIDManagerRef;
-    pub extern fn IOHIDManagerSetDeviceMatching(
-        manager: IOHIDManagerRef,
-        matching: ?*const anyopaque,
-    ) void;
-    pub extern fn IOHIDManagerScheduleWithRunLoop(
-        manager: IOHIDManagerRef,
-        run_loop: CFRunLoopRef,
-        mode: CFStringRef,
-    ) void;
-    pub extern fn IOHIDManagerUnscheduleFromRunLoop(
-        manager: IOHIDManagerRef,
-        run_loop: CFRunLoopRef,
-        mode: CFStringRef,
-    ) void;
-    pub extern fn IOHIDManagerOpen(manager: IOHIDManagerRef, options: u32) IOReturn;
-    pub extern fn IOHIDManagerClose(manager: IOHIDManagerRef, options: u32) IOReturn;
-    pub extern fn IOHIDManagerCopyDevices(manager: IOHIDManagerRef) ?CFSetRef;
-
-    pub extern fn IOHIDDeviceGetProperty(
-        device: IOHIDDeviceRef,
-        key: CFStringRef,
-    ) ?*const anyopaque;
-    pub extern fn IOHIDDeviceRegisterInputReportCallback(
-        device: IOHIDDeviceRef,
-        report: [*]u8,
-        report_length: CFIndex,
-        callback: ?IOHIDReportCallback,
-        context: ?*anyopaque,
-    ) void;
-    pub extern fn IOHIDDeviceSetReport(
-        device: IOHIDDeviceRef,
-        report_type: IOHIDReportType,
-        report_id: CFIndex,
-        report: [*]const u8,
-        report_length: CFIndex,
-    ) IOReturn;
-
-    pub extern fn arc4random_buf(buffer: *anyopaque, length: usize) void;
-    pub extern fn usleep(microseconds: c_uint) c_int;
-};
-
-pub const report_size = 64;
+pub const report_size = hid.report_size;
 pub const maximum_payload_size = 56;
 pub const side_light_first_index: u8 = 84;
 pub const side_light_count = 20;
 
 pub fn sleepMilliseconds(milliseconds: u32) void {
-    _ = c.usleep(milliseconds * 1000);
+    hid.sleepMilliseconds(milliseconds);
 }
 
 const vendor_id: i32 = 0x19f5;
@@ -146,6 +23,7 @@ const command = struct {
     const set_light_state: u8 = 0xd6;
     const set_direct_lights: u8 = 0xd8;
     const set_secret_key: u8 = 0xee;
+    const enter_iap: u8 = 0xef;
 };
 
 pub const Color = struct {
@@ -164,90 +42,25 @@ const Response = struct {
 };
 
 pub const Keyboard = struct {
-    manager: c.IOHIDManagerRef,
-    devices: c.CFSetRef,
-    device: c.IOHIDDeviceRef,
-    input_buffer: [report_size]u8 = @splat(0),
-    response: ?[report_size]u8 = null,
-    awaiting_command: u8 = 0,
-    started: bool = false,
+    hid_device: hid.Device,
 
     pub fn open() !Keyboard {
-        const manager = c.IOHIDManagerCreate(c.kCFAllocatorDefault, c.kIOHIDOptionsTypeNone) orelse
-            return error.ManagerCreateFailed;
-        errdefer c.CFRelease(manager);
-
-        const matching = try createMatchingDictionary();
-        defer c.CFRelease(matching);
-        c.IOHIDManagerSetDeviceMatching(manager, matching);
-        c.IOHIDManagerScheduleWithRunLoop(
-            manager,
-            c.CFRunLoopGetCurrent(),
-            c.kCFRunLoopDefaultMode,
-        );
-
-        const open_result = c.IOHIDManagerOpen(manager, c.kIOHIDOptionsTypeNone);
-        if (open_result != c.kIOReturnSuccess) return error.ManagerOpenFailed;
-        errdefer {
-            c.IOHIDManagerUnscheduleFromRunLoop(
-                manager,
-                c.CFRunLoopGetCurrent(),
-                c.kCFRunLoopDefaultMode,
-            );
-            _ = c.IOHIDManagerClose(manager, c.kIOHIDOptionsTypeNone);
-        }
-
-        const devices = c.IOHIDManagerCopyDevices(manager) orelse return error.DeviceNotFound;
-        errdefer c.CFRelease(devices);
-        if (c.CFSetGetCount(devices) != 1) return error.DeviceNotFound;
-
-        var values: [1]?*const anyopaque = .{null};
-        c.CFSetGetValues(devices, @ptrCast(&values));
-        const raw_device = values[0] orelse return error.DeviceNotFound;
-        const device: c.IOHIDDeviceRef = @ptrCast(@constCast(raw_device));
-
-        if (getIntegerProperty(device, "MaxInputReportSize") != report_size or
-            getIntegerProperty(device, "MaxOutputReportSize") != report_size)
-        {
-            return error.UnexpectedDevice;
-        }
-
         return .{
-            .manager = manager,
-            .devices = devices,
-            .device = device,
+            .hid_device = try hid.Device.open(.{
+                .vendor_id = vendor_id,
+                .product_id = product_id,
+                .usage_page = usage_page,
+                .usage = usage,
+            }),
         };
     }
 
     pub fn start(self: *Keyboard) void {
-        c.IOHIDDeviceRegisterInputReportCallback(
-            self.device,
-            &self.input_buffer,
-            report_size,
-            inputReportCallback,
-            self,
-        );
-        self.started = true;
+        self.hid_device.start();
     }
 
     pub fn close(self: *Keyboard) void {
-        if (self.started) {
-            c.IOHIDDeviceRegisterInputReportCallback(
-                self.device,
-                &self.input_buffer,
-                report_size,
-                null,
-                null,
-            );
-        }
-        c.IOHIDManagerUnscheduleFromRunLoop(
-            self.manager,
-            c.CFRunLoopGetCurrent(),
-            c.kCFRunLoopDefaultMode,
-        );
-        _ = c.IOHIDManagerClose(self.manager, c.kIOHIDOptionsTypeNone);
-        c.CFRelease(self.devices);
-        c.CFRelease(self.manager);
+        self.hid_device.close();
     }
 
     pub fn firmwareInfo(self: *Keyboard) ![8]u8 {
@@ -277,7 +90,7 @@ pub const Keyboard = struct {
     pub fn setLightingStateVerified(self: *Keyboard, handle: u8, state: LightingState) !void {
         try self.setLightingState(handle, state);
         for (0..5) |attempt| {
-            if (attempt > 0) _ = c.usleep(120_000);
+            if (attempt > 0) hid.sleepMilliseconds(120);
             const actual = try self.readLightingState(handle);
             if (std.mem.eql(u8, &actual, &state)) return;
         }
@@ -341,8 +154,12 @@ pub const Keyboard = struct {
 
     pub fn setColorsVerified(self: *Keyboard, first_index: u8, colors: []const Color) !void {
         try self.setColors(first_index, colors);
-        _ = c.usleep(100_000);
+        hid.sleepMilliseconds(100);
         try self.verifyColors(first_index, colors);
+    }
+
+    pub fn requestEnterIap(self: *Keyboard) !void {
+        _ = try self.transact(command.enter_iap, 4, 0, 0, &.{ 2, 0, 0, 0 });
     }
 
     pub fn verifyColors(self: *Keyboard, first_index: u8, colors: []const Color) !void {
@@ -369,7 +186,7 @@ pub const Keyboard = struct {
         var handshake: [report_size]u8 = @splat(0);
         handshake[0] = 0x55;
         handshake[1] = command.set_secret_key;
-        c.arc4random_buf(&handshake[8], maximum_payload_size);
+        hid.fillRandom(handshake[8..]);
         if (handshake[28] == 0) handshake[28] = 0xaa;
         handshake[3] = checksum(&handshake);
         const handshake_response = try self.sendAndReceive(&handshake, command.set_secret_key);
@@ -400,88 +217,13 @@ pub const Keyboard = struct {
         report: *const [report_size]u8,
         requested_command: u8,
     ) ![report_size]u8 {
-        self.response = null;
-        self.awaiting_command = requested_command;
-        const result = c.IOHIDDeviceSetReport(
-            self.device,
-            c.kIOHIDReportTypeOutput,
-            0,
+        return self.hid_device.sendAndReceive(
             report,
-            report_size,
+            .{ 0xaa, requested_command },
+            1500,
         );
-        if (result != c.kIOReturnSuccess) return error.WriteFailed;
-
-        for (0..75) |_| {
-            _ = c.CFRunLoopRunInMode(c.kCFRunLoopDefaultMode, 0.02, 1);
-            if (self.response) |response| return response;
-        }
-        return error.ResponseTimeout;
     }
 };
-
-fn inputReportCallback(
-    context: ?*anyopaque,
-    result: c.IOReturn,
-    sender: ?*anyopaque,
-    report_type: c.IOHIDReportType,
-    report_id: u32,
-    report: [*c]u8,
-    report_length: c.CFIndex,
-) callconv(.c) void {
-    _ = sender;
-    _ = report_type;
-    _ = report_id;
-    if (result != c.kIOReturnSuccess or context == null or report_length != report_size) return;
-    const self: *Keyboard = @ptrCast(@alignCast(context.?));
-    if (report[0] != 0xaa or report[1] != self.awaiting_command) return;
-    var response: [report_size]u8 = undefined;
-    @memcpy(&response, report[0..report_size]);
-    self.response = response;
-}
-
-fn createMatchingDictionary() !c.CFMutableDictionaryRef {
-    const dictionary = c.CFDictionaryCreateMutable(
-        c.kCFAllocatorDefault,
-        4,
-        &c.kCFTypeDictionaryKeyCallBacks,
-        &c.kCFTypeDictionaryValueCallBacks,
-    ) orelse return error.OutOfMemory;
-    errdefer c.CFRelease(dictionary);
-
-    try setDictionaryInteger(dictionary, "VendorID", vendor_id);
-    try setDictionaryInteger(dictionary, "ProductID", product_id);
-    try setDictionaryInteger(dictionary, "PrimaryUsagePage", usage_page);
-    try setDictionaryInteger(dictionary, "PrimaryUsage", usage);
-    return dictionary;
-}
-
-fn setDictionaryInteger(dictionary: c.CFMutableDictionaryRef, name: [*:0]const u8, value: i32) !void {
-    const key = c.CFStringCreateWithCString(
-        c.kCFAllocatorDefault,
-        name,
-        c.kCFStringEncodingUTF8,
-    ) orelse return error.OutOfMemory;
-    defer c.CFRelease(key);
-    var number_value = value;
-    const number = c.CFNumberCreate(c.kCFAllocatorDefault, c.kCFNumberIntType, &number_value) orelse
-        return error.OutOfMemory;
-    defer c.CFRelease(number);
-    c.CFDictionarySetValue(dictionary, key, number);
-}
-
-fn getIntegerProperty(device: c.IOHIDDeviceRef, name: [*:0]const u8) ?i32 {
-    const key = c.CFStringCreateWithCString(
-        c.kCFAllocatorDefault,
-        name,
-        c.kCFStringEncodingUTF8,
-    ) orelse return null;
-    defer c.CFRelease(key);
-    const property = c.IOHIDDeviceGetProperty(device, key) orelse return null;
-    if (c.CFGetTypeID(property) != c.CFNumberGetTypeID()) return null;
-    var value: i32 = 0;
-    if (c.CFNumberGetValue(@ptrCast(property), c.kCFNumberIntType, &value) == 0) return null;
-    return value;
-}
 
 fn makeRequest(
     requested_command: u8,

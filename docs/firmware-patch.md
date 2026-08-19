@@ -1,9 +1,11 @@
-# Air75 V3 firmware patch candidate
+# Air75 V3 firmware patch
 
-This document describes an **unflashed, hardware-untested** patch candidate for
-the NuPhy Air75 V3 ANSI on official firmware 1.0.16.6. It does not authorize a
-flash. A wrong or non-booting image still carries real risk, although an Air75
-V3-specific physical recovery path has now been identified below.
+This document describes the exact firmware change for the NuPhy Air75 V3 ANSI
+on official firmware 1.0.16.6. The first hardware trial proved the renderer
+change but exposed a misidentified fourth edit; the corrected image documented
+here has been built and validated offline but has not yet been flashed. A wrong
+or non-booting image still carries real risk, although an Air75 V3-specific
+physical recovery path has been identified below.
 
 ## Intended contract
 
@@ -13,10 +15,14 @@ side modes:
 - backlight effect 21 continues to render the host's `D8` RGB table;
 - effect 21 renders all 104 entries instead of stopping at 84; and
 - side mode 5 means that the stock side-effect dispatcher has no handler, so it
-  leaves indices `84…103` to effect 21.
+  leaves indices `84…103` to effect 21; and
+- `D6` can replace private mode 5 with a stock mode when `kbvu` exits.
 
-Normal side modes 0–4 retain their original dispatch paths. `kbvu` must select
-effect 21 and side mode 5 before streaming, then restore the complete original
+Stock `D6` already accepts an incoming mode 5 while the current mode is 0–4,
+but refuses every later mode change because its setter checks the *current*
+mode against 4. The fourth edit extends only that current-state guard to 5.
+Normal side modes 0–4 retain their original dispatch paths. `kbvu` selects
+effect 21 and side mode 5 before streaming, then restores the complete original
 lighting state when it exits.
 
 ## Exact patch manifest
@@ -30,12 +36,12 @@ immediate and preserves instruction size and alignment.
 | `0x0b5e6` | `13 07 30 05` | `13 07 70 06` | effect-21 completion index `83` → `103` |
 | `0x0bbaa` | `93 06 40 05` | `93 06 80 06` | effect-21 maximum `84` → `104` |
 | `0x0bbce` | `93 0a 40 05` | `93 0a 80 06` | effect-21 chunk clamp `84` → `104` |
-| `0x14a3e` | `91 47` | `95 47` | accepted side-mode maximum `4` → `5` |
+| `0x0de1a` | `11 47` | `15 47` | restorable current side-mode maximum `4` → `5` |
 
 The source image must be exactly 284,112 bytes with SHA-256
 `7fd339b0e22dff0843d6be7f8ac4a970c209b2362b49cc6babd60fcf3101642e`.
-The four-edit output has SHA-256
-`2d95a6a163b10ea1398e7603e9d4b59d1b115c192cae63a890e07310e1c4ac14`.
+The corrected four-edit output has SHA-256
+`10df67aaf7d4841cd59340d08a9699e7973fe6b5d8c0fc6aefde992ef0129e7d`.
 The S4 parser, USB setup, command dispatch table, `0xef` IAP handler, and startup
 code remain byte-identical to stock.
 
@@ -53,6 +59,19 @@ checks every original instruction byte, checks that no unlisted byte changed,
 and verifies the deterministic output hash. Firmware binaries and archives are
 ignored by Git and must not be committed or redistributed.
 
+The Zig updater is also locked to that output size and hash. Its default mode
+validates the file without opening a USB device:
+
+```console
+zig build
+./zig-out/bin/kbvu-firmware-flash \
+  firmware/Air75v3_US_v1.0.16.6_kbvu.bin
+```
+
+Adding `--flash-candidate` enters IAP, erases, writes, verifies, reboots, and
+checks application re-enumeration. That flag changes keyboard firmware and must
+only be used with explicit approval for the specific image.
+
 ## Evidence and remaining risk
 
 Static analysis establishes the first three edits directly. The custom renderer
@@ -61,12 +80,36 @@ whose exclusive end is 84; extending both bounds without changing the completion
 threshold would therefore still skip the fifth chunk. With all three edits it
 runs chunks `0…20`, `21…41`, `42…62`, `63…83`, and `84…103`.
 
-The fourth edit is deliberately smaller than adding a new function. The existing
-central side dispatcher checks for modes 0–4 and skips its mode-specific branch
-for larger values. Allowing D6 to retain mode 5 should therefore prevent the
-ordinary side renderer from overwriting effect 21. This is a static conclusion,
-not hardware proof; the first post-flash test must verify exact `D5`/`D2`
-readback and visually inspect a low-brightness left/right pattern.
+The existing central side dispatcher checks for modes 0–4 and skips its
+mode-specific branch for larger values. `D6`'s mode setter at `0x0de12` first
+reads the current side mode, then ignores the requested replacement when the
+current value exceeds 4. It does not validate the incoming value before storing
+it. The fourth edit therefore permits exactly the transition back out of private
+mode 5; it neither adds another renderer nor changes any stock dispatch path.
+
+## First hardware trial and correction
+
+The initial image used the same three renderer edits but changed `c.li a5, 4`
+to `c.li a5, 5` at `0x14a3e`. Its SHA-256 was
+`2d95a6a163b10ea1398e7603e9d4b59d1b115c192cae63a890e07310e1c4ac14`.
+That instruction actually handles lighting-state byte 2, not side mode byte 9,
+so the edit was unrelated and shifted a five-entry lookup table by one.
+
+With explicit approval, that initial image was flashed over the normal updater:
+
+- all 5,074 write blocks and all 5,074 verify blocks were acknowledged;
+- the keyboard rebooted as application `19f5:1028`, continued typing normally,
+  and answered `A1` with `10 00 01 aa 06 00 50 50` immediately after flashing;
+- effect 21 and side mode 5 survived exact `D5` readback; and
+- `D8` patterns for split red/blue, one full and one empty bar, 3/10 and 7/10
+  bars, and alternating pixels all passed exact `D2` readback at indices
+  `84…103`.
+
+This establishes independent host control and proves the first three edits.
+Cleanup restored the saved RGB values and backlight mode, but side mode remained
+5 because of the stock current-mode guard above. The keyboard remains bootable
+and usable; the corrected fourth edit is needed both to restore a stock side
+mode and to make normal `kbvu` shutdown reversible.
 
 ## Exact official Air75 updater protocol
 
@@ -105,8 +148,9 @@ metadata hash-locks the uncompressed application image to the source hash above.
 
 This is the same write/verify protocol captured independently on Air100, but the
 Air75 VID/PIDs, 56-byte selection, metadata flag, and recovery routing now come
-from NuPhyIO's Air75-specific data rather than a cross-model inference. No IAP
-command was sent while obtaining this evidence.
+from NuPhyIO's Air75-specific data rather than a cross-model inference. The
+first hardware trial subsequently confirmed the complete Air75 erase, write,
+verify, finalize, reboot, and application re-enumeration path.
 
 ## Recovery paths
 
@@ -153,9 +197,10 @@ provides closely related but **Air100-only** evidence:
   explains why preserving stock USB and `0xef` code retains software recovery
   only when the application boots far enough to handle USB.
 
-Those results support the patch method and are now corroborated by the official
-Air75 updater implementation above. They still do not prove that the patched
-image boots or that its renderer behaves as intended. Before flashing, retain
-the exact stock image and repair package, use the MacBook's direct USB-C
-connection that succeeded for the official update, and obtain the user's
-explicit approval for the flash itself.
+Those results support the patch method and are now corroborated by both the
+official Air75 updater implementation and the first Air75 hardware trial above.
+That trial proves the renderer edits; the corrected restoration guard remains
+unflashed. Before an additional flash, retain the exact stock image and repair
+package, use the MacBook's direct USB-C connection that succeeded for both the
+official and first experimental updates, and obtain explicit approval for that
+specific flash.

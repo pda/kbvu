@@ -19,6 +19,20 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(executable);
 
+    const flash_module = b.createModule(.{
+        .root_source_file = b.path("src/firmware_flash.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    flash_module.linkFramework("CoreFoundation", .{});
+    flash_module.linkFramework("IOKit", .{});
+    flash_module.link_libc = true;
+    const flash_executable = b.addExecutable(.{
+        .name = "kbvu-firmware-flash",
+        .root_module = flash_module,
+    });
+    b.installArtifact(flash_executable);
+
     const run = b.addRunArtifact(executable);
     run.step.dependOn(b.getInstallStep());
     if (b.args) |args| run.addArgs(args);
@@ -36,6 +50,20 @@ pub fn build(b: *std.Build) void {
     tests.root_module.linkFramework("IOKit", .{});
     tests.root_module.link_libc = true;
     const run_tests = b.addRunArtifact(tests);
+
+    const updater_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/updater.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    updater_tests.root_module.linkFramework("CoreFoundation", .{});
+    updater_tests.root_module.linkFramework("IOKit", .{});
+    updater_tests.root_module.link_libc = true;
+    const run_updater_tests = b.addRunArtifact(updater_tests);
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_updater_tests.step);
 }
