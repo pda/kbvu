@@ -60,7 +60,8 @@ lighting state on exit or failure.
 - [x] Build and run a minimal Zig program that displays whole-zone test colors and attempts independent patterns.
 - [x] Establish the official firmware's control boundary: individually addressable internally, but only a shared side-light effects zone is exposed to the host.
 - [x] Build an offline, exact-image-checked firmware patch candidate that renders host RGB entries `84…103` without contacting the keyboard.
-- [ ] Verify the exact Air75 bootloader/recovery path, flash only with explicit approval, then visually verify independent control.
+- [x] Verify the exact Air75 updater protocol and physical recovery path without contacting the keyboard.
+- [ ] With explicit approval, flash the candidate and visually verify independent control.
 - [x] Research macOS system-output capture and stereo level measurement.
 - [ ] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.

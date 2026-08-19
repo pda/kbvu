@@ -2,8 +2,8 @@
 
 This document describes an **unflashed, hardware-untested** patch candidate for
 the NuPhy Air75 V3 ANSI on official firmware 1.0.16.6. It does not authorize a
-flash. A wrong or non-booting image can require opening the keyboard and using a
-PCB boot pad to recover it.
+flash. A wrong or non-booting image still carries real risk, although an Air75
+V3-specific physical recovery path has now been identified below.
 
 ## Intended contract
 
@@ -68,6 +68,77 @@ ordinary side renderer from overwriting effect 21. This is a static conclusion,
 not hardware proof; the first post-flash test must verify exact `D5`/`D2`
 readback and visually inspect a low-brightness left/right pattern.
 
+## Exact official Air75 updater protocol
+
+The Air100 capture below was initially only a lead. Static inspection of the
+official **NuPhyIO 2.2.6** macOS app now independently establishes the Air75 V3
+path. Its bundled `static/js/main.7461f1d3.js` has SHA-256
+`13dc517878cd4cc879c116662b8ff36645aa4b71dccf70072100ea764e4ea5e9`.
+The relevant facts are all in that bundle:
+
+- the device table pairs Air75 V3 ANSI application `19f5:1028` with updater
+  `19f5:0722` (`6645:1826` in decimal);
+- the Air75 V3 feature record is mechanical, which makes the common updater use
+  56-byte data blocks rather than its 32-byte fallback;
+- the HID transport pads every command to 64 bytes and sends report ID zero;
+- the application-device path calls `enterIap()`, waits 1.5 seconds, and then
+  opens the updater, while an already-enumerated updater device goes directly to
+  the same firmware loader; and
+- the updater writes the image once and verifies it by transmitting the complete
+  image a second time.
+
+The frames selected for this exact model are:
+
+| Phase | 64-byte report contents |
+| --- | --- |
+| erase | `81 07 00 00 00 00 00`, then zeros |
+| write | `80`, data length (at most 56), 32-bit little-endian image offset, data |
+| verify | `82`, data length (at most 56), 32-bit little-endian image offset, data |
+| finalize | `83 02 00 00`, then zeros |
+| success/reboot | `84 01 01`, then zeros |
+
+For write and verify packets, NuPhyIO accepts a block only when response bytes
+0–1 are both zero. Offsets begin at zero and the final block is short. The
+current [official firmware metadata API](https://drive.nuphy.io/prod-api/api/nuphyIo/getLastFirmwareVersionsByType?businessId=1930212869851615233&type=1)
+returns `e2Prom: "N"`, which is why byte 6 of the erase frame is zero. The same
+metadata hash-locks the uncompressed application image to the source hash above.
+
+This is the same write/verify protocol captured independently on Air100, but the
+Air75 VID/PIDs, 56-byte selection, metadata flag, and recovery routing now come
+from NuPhyIO's Air75-specific data rather than a cross-model inference. No IAP
+command was sent while obtaining this evidence.
+
+## Recovery paths
+
+There are two distinct boot environments:
+
+1. **Normal updater (`19f5:0722`).** NuPhyIO 2.2.6 explicitly recognizes this as
+   the Air75 V3 updater and can load the latest official firmware without first
+   contacting the application. An interrupted custom update that remains in
+   this environment can therefore be retried or restored in software.
+2. **CH582 ROM ISP (USB product `0x55e0`).** A
+   [publicly shared Air75 V3 repair package](https://drive.google.com/file/d/1HOJY8UmUm4lnN-LK6wncuXxiYnZ8RUqW/view?usp=drivesdk),
+   [described by its recipient as supplied by NuPhy support](https://www.reddit.com/r/NuPhy/comments/1mqnd9r/keyboard_died_after_firmware_update_failed_air75/),
+   documents a physical route that does not depend on a working application:
+   switch the keyboard off, remove the Caps Lock keycap, hold the small button
+   beneath it, and switch from Off to Wired while USB is connected.
+
+The shared repair archive has SHA-256
+`41422e07eefe8bd22994c5dcd74a4aa846b971bd553aa2c966eb09b2dbda01ad`.
+Its macOS script waits for USB product `0x55e0`, then invokes WCH's signed
+`WCHISPTool_CMD` against a bundled factory image. The configuration names the
+MCU as **CH582**, selects **PB22** as the boot pin, erases all code flash,
+verifies the write, and resets afterward. The universal WCH executable is
+signed by “Nanjing Qinheng Microelectronics Co., Ltd.” and has SHA-256
+`92a34f31e8c6a2ab1546d245fa8403f5b2e91688ad37392456f99d2df035062e`.
+
+This package is a recovery artifact, not the source for the candidate: its
+factory image predates 1.0.16.6 and differs from the current official binary.
+It should be retained offline and used only if the normal `0x0722` path is no
+longer available. It materially improves recoverability because entering ROM
+ISP uses a physical button sampled at power-on, not application code, and does
+not require opening the keyboard case.
+
 [`gig3m/nuphykit`](https://github.com/gig3m/nuphykit/tree/66626a60c809be49805fadfe75e62db08182ffb7)
 provides closely related but **Air100-only** evidence:
 
@@ -82,8 +153,9 @@ provides closely related but **Air100-only** evidence:
   explains why preserving stock USB and `0xef` code retains software recovery
   only when the application boots far enough to handle USB.
 
-Those results support the method, but do not prove that Air75 boot PID `0x0722`
-uses identical frames or timing. Before flashing this candidate, capture an
-official Air75 update or independently verify its bootloader protocol, retain
-the exact stock image, ensure NuPhyIO can recover PID `0x0722`, and obtain the
-user's explicit approval for the flash itself.
+Those results support the patch method and are now corroborated by the official
+Air75 updater implementation above. They still do not prove that the patched
+image boots or that its renderer behaves as intended. Before flashing, retain
+the exact stock image and repair package, use the MacBook's direct USB-C
+connection that succeeded for the official update, and obtain the user's
+explicit approval for the flash itself.

@@ -330,7 +330,8 @@ The archive's SHA-256 is
 It contains `Air75v3_US_v1.0.16.6_20260721.bin`, 284,112 bytes, whose SHA-256
 matches the API value:
 `7fd339b0e22dff0843d6be7f8ac4a970c209b2362b49cc6babd60fcf3101642e`.
-The release note says, “We have updated the execution logic of the lighting.”
+The API also returns `e2Prom: "N"`. The release note says, “We have updated the
+execution logic of the lighting.”
 
 The binary was inspected offline as RISC-V RV32 with compressed instructions,
 using Capstone and the methodology in nuphykit's
@@ -389,7 +390,8 @@ effect 21's custom-buffer renderer from 84 to 104 and ensure the ordinary side
 renderer does not subsequently overwrite those pixels. That must be developed
 and flashed as an exact-model experimental firmware with a verified recovery
 path; it must not be inferred from Air100 offsets or flashed without explicit
-approval.
+approval. The exact official updater frames and Air75-specific physical recovery
+procedure are recorded in [the firmware patch notes](firmware-patch.md).
 
 ## Other useful references
 
