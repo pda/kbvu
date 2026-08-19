@@ -1,9 +1,22 @@
 #import <AppKit/AppKit.h>
+#import <ServiceManagement/ServiceManagement.h>
 
 extern void kbvu_request_stop(void);
 
-@interface KBVUMenuController : NSObject
+static void KBVUShowAlert(NSString *title, NSString *message,
+                          NSAlertStyle style) {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = style;
+    alert.messageText = title;
+    alert.informativeText = message;
+    [alert addButtonWithTitle:@"OK"];
+    [NSApp activateIgnoringOtherApps:YES];
+    [alert runModal];
+}
+
+@interface KBVUMenuController : NSObject <NSMenuDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
+@property(nonatomic, strong) NSMenuItem *startAtLoginItem;
 @end
 
 @implementation KBVUMenuController
@@ -40,14 +53,79 @@ extern void kbvu_request_stop(void);
     [menu addItem:status];
     [menu addItem:[NSMenuItem separatorItem]];
 
+    _startAtLoginItem = [[NSMenuItem alloc]
+        initWithTitle:@"Start at Login"
+               action:@selector(toggleStartAtLogin:)
+        keyEquivalent:@""];
+    _startAtLoginItem.target = self;
+    [menu addItem:_startAtLoginItem];
+    [menu addItem:[NSMenuItem separatorItem]];
+
     NSMenuItem *quit = [[NSMenuItem alloc]
         initWithTitle:@"Quit Keyboard VU"
                action:@selector(quit:)
         keyEquivalent:@"q"];
     quit.target = self;
     [menu addItem:quit];
+    menu.delegate = self;
     _statusItem.menu = menu;
+    [self updateStartAtLoginItem];
     return self;
+}
+
+- (void)menuWillOpen:(NSMenu *)menu {
+    (void)menu;
+    [self updateStartAtLoginItem];
+}
+
+- (void)updateStartAtLoginItem {
+    switch (SMAppService.mainAppService.status) {
+    case SMAppServiceStatusEnabled:
+        self.startAtLoginItem.state = NSControlStateValueOn;
+        self.startAtLoginItem.toolTip = nil;
+        break;
+    case SMAppServiceStatusRequiresApproval:
+        self.startAtLoginItem.state = NSControlStateValueMixed;
+        self.startAtLoginItem.toolTip =
+            @"Approval is required in System Settings → Login Items";
+        break;
+    case SMAppServiceStatusNotRegistered:
+    case SMAppServiceStatusNotFound:
+        self.startAtLoginItem.state = NSControlStateValueOff;
+        self.startAtLoginItem.toolTip = nil;
+        break;
+    }
+}
+
+- (void)toggleStartAtLogin:(id)sender {
+    (void)sender;
+    SMAppService *service = SMAppService.mainAppService;
+    if (service.status == SMAppServiceStatusRequiresApproval) {
+        [SMAppService openSystemSettingsLoginItems];
+        return;
+    }
+
+    NSError *error = nil;
+    BOOL changed;
+    if (service.status == SMAppServiceStatusEnabled) {
+        changed = [service unregisterAndReturnError:&error];
+    } else {
+        changed = [service registerAndReturnError:&error];
+    }
+    [self updateStartAtLoginItem];
+
+    if (!changed) {
+        NSString *message = [NSString stringWithFormat:
+            @"macOS could not change the Keyboard VU Login Item.\n\n%@",
+            error.localizedDescription ?: @"An unknown error occurred."];
+        KBVUShowAlert(@"Could not update Start at Login", message,
+                      NSAlertStyleWarning);
+        if (service.status == SMAppServiceStatusRequiresApproval) {
+            [SMAppService openSystemSettingsLoginItems];
+        }
+    } else if (service.status == SMAppServiceStatusRequiresApproval) {
+        [SMAppService openSystemSettingsLoginItems];
+    }
 }
 
 - (void)quit:(id)sender {
@@ -94,14 +172,10 @@ void kbvu_menubar_pump(void) {
 
 void kbvu_menubar_show_error(const char *message) {
     @autoreleasepool {
-        NSAlert *alert = [[NSAlert alloc] init];
-        alert.alertStyle = NSAlertStyleCritical;
-        alert.messageText = @"Keyboard VU could not start";
         NSString *details = [NSString stringWithUTF8String:message];
-        alert.informativeText = details ?: @"An unknown error occurred.";
-        [alert addButtonWithTitle:@"OK"];
-        [NSApp activateIgnoringOtherApps:YES];
-        [alert runModal];
+        KBVUShowAlert(@"Keyboard VU could not start",
+                      details ?: @"An unknown error occurred.",
+                      NSAlertStyleCritical);
     }
 }
 

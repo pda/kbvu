@@ -77,6 +77,7 @@ pub fn build(b: *std.Build) void {
     vu_module.linkFramework("CoreFoundation", .{});
     vu_module.linkFramework("Foundation", .{});
     vu_module.linkFramework("IOKit", .{});
+    vu_module.linkFramework("ServiceManagement", .{});
     vu_module.link_libc = true;
 
     const vu_executable = b.addExecutable(.{

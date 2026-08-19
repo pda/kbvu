@@ -63,9 +63,11 @@ open zig-out/kbvu.app
 
 Opening the app with no arguments starts system-audio capture and keyboard
 output. The waveform item in the macOS menu bar shows that Keyboard VU is
-running. Choose **Quit Keyboard VU** from that menu to stop it and restore the
-keyboard's complete pre-run lighting state. The app has no Dock icon and emits
-no terminal output.
+running. Its **Start at Login** item toggles the native macOS Login Item and
+shows a checkmark when enabled. A dash means macOS requires approval; selecting
+the item then opens the relevant System Settings pane. Choose **Quit Keyboard
+VU** to stop it and restore the keyboard's complete pre-run lighting state. The
+app has no Dock icon and emits no terminal output.
 
 The first run asks for **System Audio Recording Only** access. Keyboard output
 requires the corrected firmware documented in [the patch notes](docs/firmware-patch.md),
@@ -73,11 +75,10 @@ a wired USB connection, and NuPhyIO to be closed. If either audio capture or the
 keyboard cannot start, the app displays an error instead of disappearing
 silently.
 
-For launch-at-login use, first copy `zig-out/kbvu.app` to a stable location
-such as `/Applications/kbvu.app`. Open that copy once and grant audio
-permission, then add it under **System Settings → General → Login Items &
-Extensions → Open at Login**. Re-copy it after rebuilding. No daemon or
-LaunchAgent is needed.
+For launch-at-login use, first copy `zig-out/kbvu.app` to a stable location such
+as `/Applications/kbvu.app`, open that copy, and enable **Start at Login** from
+its menu. Re-copy it after rebuilding. The app uses macOS's native Login Item
+service; no daemon or LaunchAgent is needed.
 
 ## Terminal stereo VU meter
 
@@ -160,7 +161,7 @@ state on exit or failure when running the corrected firmware.
 - [x] Build and verify a Zig terminal stereo VU meter using test audio.
 - [x] Connect the audio meter to the keyboard LED driver and exercise the complete live capture-to-D8 path.
 - [x] Visually confirm physical channel orientation, upward bar direction, and bass colouring.
-- [x] Package ongoing operation as a macOS menu-bar app with opt-in terminal output.
+- [x] Package ongoing operation as a macOS menu-bar app with opt-in terminal output and a native Start at Login toggle.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
 collected and each implementation phase is completed.

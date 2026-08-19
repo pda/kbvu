@@ -73,7 +73,12 @@ screen-recording path.
 
 On macOS 26, `kbvu` is therefore built as a menu-bar `.app` bundle with a stable
 bundle identifier. `open zig-out/kbvu.app` starts system capture plus keyboard
-output without a terminal or Dock icon; its menu provides the normal Quit path.
+output without a terminal or Dock icon; its menu provides the normal Quit path
+and registers or unregisters `SMAppService.mainAppService` for Start at Login.
+The item's checkmark is derived from the system service status, not a separate
+application preference; a mixed state links to System Settings when approval is
+required.
+
 For diagnostics, `zig-out/bin/kbvu-vu-live` uses `open` to give the same app its
 own TCC identity while attaching its standard streams to the current TTY. That
 launcher forwards Ctrl-C directly. Terminal output is explicit: `--ansi` selects
