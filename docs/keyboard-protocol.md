@@ -147,10 +147,12 @@ F1–F6), with a changed-value test at F1 index 1, not the side LEDs. Its
 uses address 0 and handle 0.
 
 NuPhyIO's `84 + 20` model and hardware `D2` reads confirm that side LEDs occupy
-indices `84…103` in the rendered RGB table, but that alone does not prove that
-the same values are writable `D8` indices. `D8` is absent from NuPhyIO's
-published-in-code S4 command enumeration; it is an undocumented firmware
-extension verified by N Agent Bridge only for physical key LEDs.
+indices `84…103` in the rendered RGB table. N Agent Bridge's public key map
+ends at index 83 and treats the side bars only as `D6` fields 9–16
+([key map](https://github.com/bohu8264/N-Agent-Bridge/blob/fed40a2fe72d5ff226fc0ac0d3e0e6800b29d2fd/Sources/Air75AgentBridgeCore/Lighting/SignalLightLayout.swift#L25-L70),
+[side modes](https://github.com/bohu8264/N-Agent-Bridge/blob/fed40a2fe72d5ff226fc0ac0d3e0e6800b29d2fd/Sources/Air75AgentBridgeCore/Lighting/Air75V3LightingController.swift#L128-L140)).
+Later static analysis below proves that `D8` does store side entries, but the
+renderer deliberately excludes them.
 
 N Agent Bridge also defines backlight mode 21 (`0x15`) as
 `signalIndicator`. Its first-time setup calls
@@ -199,9 +201,9 @@ The Air100 evidence is unusually strong:
 The Air100's tail LED/side-light mapping remained inferred rather than
 individually verified, so even that project does not provide a transferable bar
 index map. It also established custom-firmware feasibility for the Air100 by
-analyzing its unencrypted CH58x firmware and bootloader, but none of that has
-been validated for the Air75 V3. It is a useful fallback direction, not evidence
-that Air75 firmware must be replaced.
+analyzing its unencrypted CH58x firmware and bootloader. Its static-analysis
+method transferred to the Air75 binary; its model-specific offsets, LED count,
+and flashing assumptions do not.
 
 ## Internal addressability versus USB control
 
@@ -213,24 +215,17 @@ mode, speed, brightness, and palette controls.
 
 Conversely, absence from NuPhyIO's UI or command enum does not prove absence
 from firmware. The Air100's working `D8` command was hidden from the same enum.
-The evidence now supports a narrower and testable question: whether the Air75's
-104-entry rendered table can be supplied by the host under the correct hidden
-render mode.
+The firmware and hardware evidence now settle the distinction: the host can
+supply all 104 custom RGB entries, but the stock custom renderer consumes only
+the first 84. The side pixels remain individually addressable inside the
+firmware while the exposed `D6` contract controls them as one zone.
 
-Important remaining uncertainties are:
-
-- whether this Air75 firmware accepts effect 21, or requires an update or a
-  model-specific activation sequence;
-- whether `D8` uses the rendered-table indices `84…103` for the bars or only a
-  key-light subset;
-- whether another index space or route exists. Known working `D8`
-  implementations use address 0 and handle 0, while N Agent Bridge identifies
-  lighting handle 1 as the Windows profile rather than a side-light selector;
-  and
-- whether a separate hidden side command exists. No inspected Air75 source or
-  NuPhyIO traffic shows one. On the Air100, `D7` is an asynchronous
-  `LightStateChange` report and `D8` is the hidden setter, so blindly probing the
-  opcode gaps is neither justified nor safe.
+No inspected Air75 source, NuPhyIO traffic, open-source implementation, or
+firmware dispatch path shows a second side-frame command. Known working `D8`
+implementations use address 0 and handle 0; handle 1 is a Windows lighting
+profile rather than a side selector. On the Air100, `D7` is an asynchronous
+`LightStateChange` report and `D8` is the hidden setter, so blindly probing
+opcode gaps is neither justified nor safe.
 
 ## Air75 V3 hardware results
 
@@ -277,38 +272,124 @@ A later run added `D1` and the mode gate learned from `nuphykit`:
    stopped **before sending any `D8` command**, restored the original complete
    lighting state, and reported no restoration warning.
 
-Consequently, neither the known key-light `D8` control check nor a mode-21 side
-write has yet run on this keyboard. The remaining uncertainty could be firmware
-version support, another Air75-specific state requirement, or a different
-render-mode mechanism.
+At that point, neither the known key-light `D8` control check nor a mode-21 side
+write had run on this keyboard. The remaining uncertainty was firmware version
+support, another Air75-specific state requirement, or a different render-mode
+mechanism.
 
 The A1 response is intentionally recorded as raw hexadecimal rather than called
 a semantic version. Its first six bytes were stable (`0e 00 01 aa 06 00`), while
 the final two varied with the session (`d3 d3`, later `e9 e9`), so interpreting
 the eight requested bytes directly as a version would be unjustified. NuPhyIO's
-displayed firmware version is the authoritative value for the pending update.
+displayed firmware version is the authoritative value.
 
-Testing is paused at the user's request while the firmware is reviewed or
-updated. No further HID access should occur until the user explicitly resumes
-testing.
+### Firmware 1.0.16.6 retest
 
-## Next safe experiment
+The keyboard was upgraded through NuPhyIO to official firmware **1.0.16.6** and
+connected directly to the MacBook Pro by USB-C rather than through the previous
+hub and Studio Display. Direct attachment was required for the update; it may
+affect updater reliability, but the successful HID transactions do not show
+that it changes the lighting protocol.
 
-After testing is resumed:
+With NuPhyIO closed, the guarded full demo then established:
 
-1. Record the exact Air75 V3 ANSI firmware version shown by NuPhyIO, then close
-   NuPhyIO before opening another HID session.
-2. Run the read-only probe and confirm `D1 = 104` plus the original `D5` state.
-3. Attempt complete-state `D6` effect 21 and print the actual `D5` mismatch if
-   it still fails.
-4. Only after effect 21 verifies, write and restore known key-light index 1 via
-   `D8` and require exact `D2` readback. This validates this implementation's
-   `D8` path independently of side-light assumptions.
-5. Only after that passes, test side indices `84…103` with an unmistakable
-   red/blue split, exact `D2` readback, a manual hold, and restoration.
-6. If the side range still fails, investigate model-specific indexing or routing
-   without sweeping unknown opcodes. Command `0xef` enters firmware/IAP mode and
-   must never be included in exploratory probes.
+1. `A1` returned `10 00 01 aa 06 00 2f 2f`; only the first byte's change from
+   `0e` to `10` is treated as update evidence, not a general version decoder.
+2. `D1` again returned 104 and `D5` reported backlight mode 6, side mode 4, and
+   side brightness 60.
+3. Supported shared-bar red, green, blue, and dim-white `D6` states all passed
+   exact delayed `D5` verification.
+4. Hidden backlight effect 21 now passed exact `D5` verification.
+5. `D8` changed key-light index 1 to magenta, passed exact `D2` verification,
+   and restored its prior color. This verifies the handshake, encryption,
+   routing, command encoding, hidden mode gate, and readback implementation.
+6. Under effect 21, `D8` packets requested red at indices `84…93` and blue at
+   `94…103`. Both full payloads were echoed, but delayed `D2` readback remained
+   at the dim-white baseline (`#131313`). Strict verification rejected the
+   pattern.
+7. The side custom-color entries and complete original lighting state were
+   overwritten with their baselines and restored without warnings.
+
+This isolates the failure to Air75 side rendering rather than a malformed USB
+transaction. The direct connection also rules out the previous hub as the
+cause of the side-write failure.
+
+## Official firmware provenance and static analysis
+
+NuPhyIO's public keyboard-list API identifies the exact target as Air75 V3 ANSI
+business ID `1930212869851615233`, application PID `0x1028`, and bootloader PID
+`0x0722`:
+
+- [keyboard list API](https://drive.nuphy.io/prod-api/api/nuphyIo/keyBoardList)
+- [latest application firmware API](https://drive.nuphy.io/prod-api/api/nuphyIo/getLastFirmwareVersionsByType?businessId=1930212869851615233&type=1)
+
+On 2026-08-19, the latter returned official version `1.0.16.6`, firmware ID
+`2079506883036012545`, and [this archive](https://cdn.nuphy.io/image/2026/07/21/35f97f78d9d84393a7dea646f77e8f11.zip).
+The archive's SHA-256 is
+`37697fcbe35d39cafc576e7c3b7042015dcc8e952805638655d8fae743de1a48`.
+It contains `Air75v3_US_v1.0.16.6_20260721.bin`, 284,112 bytes, whose SHA-256
+matches the API value:
+`7fd339b0e22dff0843d6be7f8ac4a970c209b2362b49cc6babd60fcf3101642e`.
+The release note says, “We have updated the execution logic of the lighting.”
+
+The binary was inspected offline as RISC-V RV32 with compressed instructions,
+using Capstone and the methodology in nuphykit's
+[`fwtool.py`](https://github.com/gig3m/nuphykit/blob/66626a60c809be49805fadfe75e62db08182ffb7/firmware/fwtool.py).
+All addresses below are raw binary file offsets, not runtime addresses.
+
+The S4 parser at `0x14e02` checks request marker `0x55`, extracts the opcode,
+handles `0xee`, verifies/decrypts the frame, normalizes command values by
+subtracting `0x2f`, and dispatches through the self-relative table at `0x42c9c`.
+That table resolves these handlers:
+
+| Command | Handler file offset |
+| ---: | ---: |
+| `D1` | `0x155a0` |
+| `D2` | `0x15326` |
+| `D5` | `0x1552c` |
+| `D6` | `0x1550e` |
+| `D8` | `0x154be` |
+
+The `D1` handler writes constant `0x68` (104). More importantly, the `D8`
+handler at `0x154be` divides the payload into four-byte records, calculates
+`index * 3`, and writes RGB into the custom buffer at `gp + 0x2ec`. Its index
+guard compares against `0x68`, so side records `84…103` are stored. The ACK is
+therefore not merely accepting and discarding those indices.
+
+The only renderer that reads `gp + 0x2ec` begins at `0x0bba6`. It calculates a
+21-LED chunk, then clamps both the chunk end and render loop to `0x54` (84):
+
+```text
+0x0bbaa  addi   a3, zero, 0x54       # maximum key-light count
+...
+0x0bbce  addi   s5, zero, 0x54       # clamp chunk end to 84
+0x0bbdc  addi   a5, gp, 0x2ec        # D8 custom RGB buffer
+...
+0x0bc1e  bltu   a5, s5, ...          # render only indices < 84
+```
+
+Separately, the side renderer calls the low-level LED setter for the ranges
+`84…93` and `94…103`. The side-mode cycling logic at `0x0e01c` wraps the mode
+with `sltiu ..., 5`, confirming exactly modes 0–4; there is no mode 5/custom
+branch. Numerous side effects render up to exclusive bound `0x68` while main
+backlight effects use exclusive bound `0x54`.
+
+This reconciles every observation:
+
+- all 104 LEDs are individually addressable by firmware;
+- `D8` stores host RGB for all 104 positions;
+- effect 21 intentionally consumes only the first 84 values;
+- the five-mode side renderer overwrites/owns positions 84–103; and
+- `D2` reports the resulting rendered frame, so side `D8` writes remain
+  invisible even though their RGB bytes exist in RAM.
+
+The official 1.0.16.6 USB protocol therefore cannot display arbitrary host
+values on the two bars. The smallest plausible firmware change is to extend
+effect 21's custom-buffer renderer from 84 to 104 and ensure the ordinary side
+renderer does not subsequently overwrite those pixels. That must be developed
+and flashed as an exact-model experimental firmware with a verified recovery
+path; it must not be inferred from Air100 offsets or flashed without explicit
+approval.
 
 ## Other useful references
 
@@ -325,15 +406,18 @@ After testing is resumed:
   exactly matches the Air75 V3 wired keyboard HID descriptor on macOS, but only
   controls the standard one-bit Caps Lock output. It is evidence for safe HID
   matching, not arbitrary RGB control.
-- [NuphyBar](https://github.com/itsmaiGe/NuphyBar) demonstrates native macOS
-  `IOHIDManager` use for a NuPhy keyboard, but explicitly does not support Air
-  V3 and relies on custom Air60 V2 firmware. Its two-byte host LED protocol does
-  not apply here.
-- [nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) streams indexed
-  side-light RGB over Raw HID, but only after flashing its custom QMK handler
-  to an Air75 V2 (`19f5:3246`). Its firmware, MCU target, LED count, and HID
-  protocol do not apply to the Air75 V3 (`19f5:1028`). It nevertheless shows
-  what an eventual V3 custom-firmware solution would need to provide.
+- [NuphyBar](https://github.com/itsmaiGe/NuphyBar/tree/004d43c13986c434a15060279c1d253263d73e38),
+  inspected at commit `004d43c`, demonstrates native macOS `IOHIDManager` use
+  but [explicitly does not support Air V3](https://github.com/itsmaiGe/NuphyBar/blob/004d43c13986c434a15060279c1d253263d73e38/README.md#L61-L68).
+  It patches official Air60 V2 firmware so ordinary host Num/Scroll Lock bits
+  drive five right-side LEDs. Its two-byte host protocol and LED indices do not
+  apply here, but its exact-binary patch and recovery discipline are relevant.
+- [nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music/tree/6e3086dffbbcb70daafb20d486e704be99bdf521),
+  inspected at commit `6e3086d`, streams indexed side-light RGB over Raw HID,
+  but only after flashing its custom QMK handler to an Air75 V2 (`19f5:3246`).
+  Its [12-pixel side-frame protocol](https://github.com/ravila4/nuphy-rgb-music/blob/6e3086dffbbcb70daafb20d486e704be99bdf521/src/nuphy_rgb/hid_utils.py#L118-L141),
+  firmware, MCU target, and LED count do not apply to the Air75 V3
+  (`19f5:1028`). It nevertheless shows the needed host-frame architecture.
 - [Nudelta](https://github.com/donn/nudelta) reverse-engineers older NuPhy
   Console keyboards but explicitly excludes Air75 V2/V3/HE because NuPhyIO uses
   a different protocol.

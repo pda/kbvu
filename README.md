@@ -12,30 +12,28 @@ The target keyboard was identified while connected over USB as:
 - USB product ID: `0x1028`
 - USB serial string: `NuPhy Keybord 0720`
 
-This project initially targets macOS only and uses Zig. It is experimental:
-before capturing audio, it must establish that host software can safely control
-the side LEDs independently and at a useful refresh rate.
+This project initially targets macOS only and uses Zig. It is experimental: the
+first phase determines whether host software can safely control the side LEDs
+independently, using stock firmware if possible and an exact-model firmware
+change only if necessary.
 
 ## Current result
 
-Feasibility is **unresolved**. The probe has established that:
+The official firmware's limitation is now established. On official Air75 V3
+ANSI firmware **1.0.16.6**:
 
 - `D1` reports 104 LEDs, matching NuPhyIO's 84 key LEDs plus 20 side LEDs;
-- `D2` reads rendered RGB values for indices `84…103`;
 - `D6` can set both bars together as one effects zone; and
-- undocumented `D8` accepts `[index, red, green, blue]` records.
+- hidden effect 21 plus undocumented `D8` provide verified per-key control for
+  key indices `0…83`.
 
-The first `D8` side-light test left both bars dim white and produced unchanged
-`D2` readback, but that test used ordinary backlight effect 6. Subsequent
-research found that the closely related Air100 V3 renders its `D8` buffer only
-under hidden effect 21. Therefore the first result does **not** establish that
-the Air75 V3 lacks per-LED host control.
-
-A follow-up attempted to select effect 21 through `D6`, but exact `D5` readback
-verification failed, so the program restored the original state without sending
-another `D8` write. Testing is paused while the keyboard firmware is reviewed or
-updated. See [the protocol research](docs/keyboard-protocol.md) for evidence,
-citations, and the next experiment.
+However, `D8` side-index writes still leave `D2` unchanged. Static analysis
+explains why: `D8` stores all 104 RGB entries, but effect 21 renders
+only indices `0…83`; a separate five-mode renderer owns side indices `84…103`
+and has no host-frame mode. Stock firmware therefore exposes both bars only as
+one `D6` effects zone, not as 20 independently host-controlled pixels. A
+model-specific firmware change is required for stereo VU output. See
+[the protocol research](docs/keyboard-protocol.md) for evidence and citations.
 
 ## Keyboard probe
 
@@ -50,19 +48,20 @@ zig build
 `--probe` performs management reads plus the required `EE` session handshake;
 it sends no lighting or persistent-configuration write. The full run temporarily
 shows both bars in red, green, blue, and dim white through the supported
-whole-zone command. It then requires effect 21 to survive exact `D5` readback,
-verifies and restores `D8` first on known key-light index 1, and only then
-attempts independent bar patterns with exact `D2` readback. It restores the
-complete original lighting state on exit or failure.
+whole-zone command. It then selects effect 21, verifies and restores `D8` first
+on known key-light index 1, and demonstrates the stock-firmware side-render
+limitation with an exact `D2` readback check. It restores the complete original
+lighting state on exit or failure.
 
 ## Plan
 
 - [x] Record the project goal and exact connected keyboard model.
 - [x] Collect documentation and open-source references for the Air75 V3 USB/HID protocol and side LEDs.
 - [x] Build and run a minimal Zig program that displays whole-zone test colors and attempts independent patterns.
-- [ ] Establish independent control of the two ten-LED bars. **Pending firmware review/update and an effect-21 retest.**
-- [ ] Research macOS system-output capture and stereo level measurement. **Paused at the keyboard feasibility gate.**
-- [ ] Build and verify a Zig terminal stereo VU meter using test audio. **Paused at the keyboard feasibility gate.**
+- [x] Establish the official firmware's control boundary: individually addressable internally, but only a shared side-light effects zone is exposed to the host.
+- [ ] Add a safe, model-specific firmware path that renders host RGB entries `84…103`, then visually verify independent control.
+- [ ] Research macOS system-output capture and stereo level measurement.
+- [ ] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
