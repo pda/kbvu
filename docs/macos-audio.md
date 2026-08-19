@@ -40,11 +40,12 @@ The implementation sequence is:
 4. Register an `AudioDeviceIOProc` on the aggregate with
    `AudioDeviceCreateIOProcID`, then call `AudioDeviceStart`.
 5. In the real-time callback, inspect every `AudioBuffer` and support both
-   interleaved and planar Float32 stereo. Only update preallocated atomic level
-   accumulators; do not allocate, print, lock, or call HID from the callback.
+   interleaved and planar Float32 stereo. Only write block sums to a fixed-size
+   single-producer/single-consumer queue; do not allocate, print, lock, or call
+   HID from the callback.
 6. On shutdown, stop the device, destroy the IOProc, destroy the aggregate, and
-   finally destroy the tap. Zig `defer` blocks should mirror that reverse order
-   on every error path.
+   finally destroy the tap. Cleanup follows that reverse order on every error
+   path.
 
 The relevant declarations are in the installed macOS SDK's
 `CoreAudio/AudioHardwareTapping.h`, `CoreAudio/CATapDescription.h`, and
@@ -70,9 +71,16 @@ of an aggregate containing a tap requests **System Audio Recording Only**
 permission. This differs from microphone access and from ScreenCaptureKit's
 screen-recording path.
 
-On macOS 26, `kbvu` should therefore be built as a small `.app` bundle with a
-stable bundle identifier even though its executable is terminal-oriented. The
-binary inside the bundle can still render ANSI to its controlling terminal.
+On macOS 26, `kbvu` is therefore built as a small `.app` bundle with a stable
+bundle identifier even though its executable is terminal-oriented. It must be
+started through LaunchServices: directly executing a child process from a
+terminal makes that terminal the TCC-responsible application, and third-party
+terminals may not carry `NSAudioCaptureUsageDescription`.
+`zig-out/bin/kbvu-vu-live` uses `open` to give `kbvu-vu.app` its own TCC identity
+while attaching its standard streams to the current TTY. The launcher forwards
+Ctrl-C directly, and the display leaves the cursor enabled so an abrupt exit
+cannot leave the terminal in a damaged state.
+
 Keeping a stable signing identity avoids turning each rebuild into a different
 TCC client. Development can use one ad-hoc-signed final build, but changing its
 contents may require granting it again; a persistent Apple Development signature
@@ -85,13 +93,13 @@ Security → System Audio Recording Only and exit without touching the keyboard.
 
 ## Stereo level calculation
 
-Capture and rendering run at different rates. The callback accumulates, for each
-channel and display interval:
+Capture and rendering run at different rates. The callback records, for each
+channel and audio block:
 
-- peak magnitude: \(p = \max_i |x_i|\); and
-- mean square: \(q = \frac{1}{N}\sum_i x_i^2\), with RMS \(r = \sqrt{q}\).
+- sum of squares: \(s = \sum_i x_i^2\); and
+- sample count: \(N\), giving RMS \(r = \sqrt{s/N}\).
 
-The first terminal version will display RMS in dBFS:
+The terminal meter displays RMS in dBFS:
 
 \[d = 20\log_{10}(\max(r, 10^{-6}))\]
 
@@ -101,11 +109,35 @@ independently. A fast attack and time-based decay are applied outside the audio
 callback so the bars remain readable between callbacks without making the
 measurement depend on the hardware block size.
 
-The terminal demo should expose the numeric dBFS values as well as ten-segment
-bars. That makes an end-to-end test unambiguous: a stereo test file with isolated
-left/right tones at known digital amplitudes can be played with `afplay`, and the
-recorded meter output can be checked for channel identity, relative level,
-silence, attack, and decay.
+`--plain` exposes the numeric dBFS values as well as ten-segment bars. The
+built-in `--source test` produces exact-period stereo sine blocks at −6/−18,
+−18/−6, and −12/−12 dBFS followed by silence. It traverses the same strided
+sample, RMS, ballistics, and rendering code as live capture without depending on
+TCC or an output device. `--frames N` makes the executable terminate
+deterministically for automated checks.
+
+## Implementation and verification
+
+- `src/audio_capture.m` owns the private unmuted tap, tap-only aggregate,
+  Float32 layout checks, IOProc, and reverse-order cleanup.
+- `src/meter.zig` owns the fixed lock-free queue, independent stereo RMS,
+  30 dB/s decay, ten-cell mapping, test source, and plain/ANSI renderers.
+- `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, and signal
+  cleanup.
+- `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
+  and LaunchServices/TTY bridge required by TCC.
+
+`zig build test` verifies interleaved channel identity, known RMS values,
+ballistics, all dBFS cell boundaries, deterministic plain rendering, and the
+two-line ANSI shape. Running
+`./zig-out/bin/kbvu-vu --source test --plain --frames 4` verifies the complete
+test-source executable path. A LaunchServices-started live probe captured a
+generated `afplay` WAV at approximately −21 dBFS left and −33 dBFS right,
+preserving the file's expected 12 dB channel separation and orientation. The
+absolute level reflects the active output route's stereo mixdown. The probe also
+established that direct execution is denied by TCC under a terminal lacking the
+usage key; this is why the supported live path is `zig-out/bin/kbvu-vu-live`
+rather than the nested executable.
 
 ## Open-source corroboration
 

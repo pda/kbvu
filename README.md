@@ -35,6 +35,47 @@ one `D6` effects zone, not as 20 independently host-controlled pixels. A
 model-specific firmware change is required for stereo VU output. See
 [the protocol research](docs/keyboard-protocol.md) for evidence and citations.
 
+The macOS audio half is implemented independently of the keyboard path. A
+first-party Core Audio process tap captures the global stereo output mix, and a
+Zig RMS meter renders two ten-cell Unicode/ANSI rows. It can therefore visualize
+Spotify and other application audio without a virtual loopback device. See
+[the audio research](docs/macos-audio.md) for the design and permission details.
+
+## Terminal stereo VU meter
+
+Build and exercise the deterministic stereo test source without requesting any
+macOS permission:
+
+```console
+zig build
+zig build test
+./zig-out/bin/kbvu-vu --source test --plain --frames 4
+```
+
+The plain mode emits numeric dBFS and exactly ten cells for each channel, making
+it suitable for tests and agent inspection. Omit `--plain` for the compact live
+ANSI display:
+
+```text
+L █████████░
+R ███████░░░
+```
+
+To meter live system output on macOS 14.2 or newer, use the app launcher from an
+interactive terminal:
+
+```console
+./zig-out/bin/kbvu-vu-live
+```
+
+The first run asks for **System Audio Recording Only** access. The launcher is
+important: it starts the signed `zig-out/kbvu-vu.app` through LaunchServices so
+TCC attributes the request to `kbvu-vu`, while routing ANSI output and Ctrl-C
+back to the terminal. Directly executing the app's nested binary makes the
+terminal application responsible for permission and is intentionally rejected.
+An ad-hoc signature is used when no Apple Development identity is available, so
+a changed rebuild may need permission to be granted again.
+
 ## Keyboard probe
 
 Build with Zig 0.16 or newer and close NuPhyIO before running:
@@ -62,7 +103,7 @@ lighting state on exit or failure.
 - [x] Build an offline, exact-image-checked firmware patch candidate that renders host RGB entries `84…103` without contacting the keyboard.
 - [ ] Verify the exact Air75 bootloader/recovery path, flash only with explicit approval, then visually verify independent control.
 - [x] Research macOS system-output capture and stereo level measurement.
-- [ ] Build and verify a Zig terminal stereo VU meter using test audio.
+- [x] Build and verify a Zig terminal stereo VU meter using test audio.
 - [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
