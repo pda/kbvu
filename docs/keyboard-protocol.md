@@ -314,6 +314,64 @@ This isolates the failure to Air75 side rendering rather than a malformed USB
 transaction. The direct connection also rules out the previous hub as the
 cause of the side-write failure.
 
+## Lighting baseline recovery and factory reset
+
+The earliest durable record of the keyboard's pre-`kbvu` lighting configuration
+contains only the fields printed by the probe: backlight mode 6, side mode 4,
+and side brightness 60. Neither the repository nor its commit history contains
+a complete 17-byte `D5` response captured before `kbvu` first ran.
+
+After an interrupted run and USB reconnect, the complete state was read as:
+
+```text
+15 32 01 00 00 00 00 05 80 04 3c 02 00 00 00 ff ae
+```
+
+The old process had selected backlight effect 21 and fixed-colour mode. A first
+one-off repair changed only byte 0 back to the recorded effect 6. That state
+looked unlike the user's previous effect. N Agent Bridge's field mapping then
+identified byte 4 as the backlight `isRGB` flag, so a second repair changed it
+from 0 to 1. Exact `D5` readback produced the current reconstructed state:
+
+```text
+06 32 01 00 01 00 00 05 80 04 3c 02 00 00 00 ff ae
+```
+
+This reconstruction is not a previously captured factory-state record. It is
+based on the three fields `kbvu` deliberately replaces—bytes 0, 4, and 9—plus
+the user's visual comparison. All other bytes were preserved. In particular,
+the backlight speed byte remains 1 and the side-light speed byte remains 2, so
+neither the app nor either repair increased the stored speed. Writing `D6` can
+restart an effect's phase, and changing fixed-colour/RGB behavior can change its
+appearance, which may account for a perceived speed difference.
+
+NuPhyIO's Reset warning says, “Returns the keyboard to the factory setting, all
+your changes will be lost, please proceed with caution.” Inspection of the same
+hash-locked NuPhyIO bundle cited above shows that its S4 reset path sends
+`RestoreFactory`; the
+[`nuphy-tools` S4 opcode table](https://github.com/kelchm/nuphy-tools/blob/03140bc1534001599bfcd0a0ef61706bd34d377d/PROTOCOL.md#L93-L105)
+identifies this as application command `0xf1`, separately from `0xef` firmware
+update/IAP mode. NuPhyIO's firmware update follows the latter path, re-enumerates
+the keyboard as updater `19f5:0722`, then transfers and verifies a complete
+284,112-byte image. Reset does none of those things and therefore does **not**
+replace the application image or remove the four-byte `kbvu` firmware patch.
+
+The exact Air75 V3 configuration scope of `F1` has not been destructively
+measured here. Closely related Air100 V3 hardware research reports that it resets
+all five configuration spaces—keymaps/macros, keyboard functions, sleep,
+application-defined data, and lighting—while a firmware update preserves those
+spaces
+([configuration spaces](https://github.com/gig3m/nuphykit/blob/66626a60c809be49805fadfe75e62db08182ffb7/nuphykit/spaces.py#L1-L50),
+[reset observations](https://github.com/gig3m/nuphykit/blob/66626a60c809be49805fadfe75e62db08182ffb7/PROTOCOL.md#L1344-L1404),
+[firmware-update preservation](https://github.com/gig3m/nuphykit/blob/66626a60c809be49805fadfe75e62db08182ffb7/PROTOCOL.md#L1965-L1969)).
+That is strong S4-family evidence, not an Air75-specific guarantee. On the
+Air75, the safe interpretation of NuPhyIO's warning is that all customized
+keymaps, macros, lighting, sleep, and other configurator settings may be lost.
+The [NuPhy shortcut guide](https://nuphy.dev/?en), which explicitly includes
+Air75 V3, also documents holding `Fn` + `[` for three seconds to restore factory
+settings. Use NuPhyIO's visible Reset action in preference to sending raw `F1`,
+and only after accepting the configuration loss.
+
 ## Official firmware provenance and static analysis
 
 NuPhyIO's public keyboard-list API identifies the exact target as Air75 V3 ANSI
