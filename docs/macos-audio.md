@@ -140,8 +140,13 @@ for automated checks.
 - `src/meter.zig` owns the fixed lock-free queue, independent stereo RMS,
   low-frequency energy analysis, 30 dB/s decay, ten-cell mapping, test source,
   and plain/ANSI renderers.
+- `src/keyboard_lights.zig` maps those same stereo lengths and shared bass colour
+  onto side indices `84…103` in reverse index order so each bar grows upward,
+  selects private renderer mode 5, and restores the saved RGB table and lighting
+  state on exit.
 - `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, and signal
-  cleanup.
+  cleanup. With `--keyboard`, this non-real-time loop also performs D8 writes;
+  the Core Audio callback never touches HID.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
 
@@ -156,7 +161,9 @@ preserving the file's expected 12 dB channel separation and orientation. The
 absolute level reflects the active output route's stereo mixdown. The probe also
 established that direct execution is denied by TCC under a terminal lacking the
 usage key; this is why the supported live path is `zig-out/bin/kbvu-vu-live`
-rather than the nested executable.
+rather than the nested executable. A later `--keyboard` run completed 130 live
+system-audio frames while changing both bar lengths and bass RGB, then a fresh
+keyboard probe confirmed restoration to backlight mode 6 and stock side mode 4.
 
 ## Open-source corroboration
 

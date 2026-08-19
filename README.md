@@ -42,13 +42,14 @@ after every pattern, and a fresh probe confirmed restoration to backlight mode
 6 and stock side mode 4. See [the firmware patch notes](docs/firmware-patch.md)
 for the exact manifest, trial history, updater, and recovery evidence.
 
-The macOS audio half is implemented independently of the keyboard path. A
-first-party Core Audio process tap captures the global stereo output mix, and a
-Zig RMS meter renders two ten-cell Unicode/ANSI rows. The independent bar
-lengths show left/right volume, while their shared colour runs from cyan to red
-as the mix becomes more bass-heavy. It can therefore visualize Spotify and
-other application audio without a virtual loopback device. See
-[the audio research](docs/macos-audio.md) for the design and permission details.
+The macOS audio and keyboard paths are now connected. A first-party Core Audio
+process tap captures the global stereo output mix, and the 20 Hz Zig display
+loop renders it both in the terminal and, with `--keyboard`, on the two physical
+bars. Independent lengths show left/right volume; their shared colour runs from
+cyan through yellow to red as the mix becomes more bass-heavy. HID work remains
+outside the real-time audio callback, and normal exit restores the saved RGB
+table and lighting modes. See [the audio research](docs/macos-audio.md) for the
+capture design and permission details.
 
 ## Terminal stereo VU meter
 
@@ -81,6 +82,7 @@ interactive terminal:
 
 ```console
 ./zig-out/bin/kbvu-vu-live
+./zig-out/bin/kbvu-vu-live --keyboard
 ```
 
 The first run asks for **System Audio Recording Only** access. The launcher is
@@ -90,6 +92,12 @@ back to the terminal. Directly executing the app's nested binary makes the
 terminal application responsible for permission and is intentionally rejected.
 An ad-hoc signature is used when no Apple Development identity is available, so
 a changed rebuild may need permission to be granted again.
+
+Keyboard output requires the corrected firmware documented in
+[the patch notes](docs/firmware-patch.md), a wired USB connection, and NuPhyIO
+to be closed. The filled LEDs use the same bass colour shown in the ANSI meter;
+unfilled LEDs remain dark, and each bar fills upward from the physical bottom.
+Ctrl-C and finite `--frames` runs restore the complete pre-run side-light state.
 
 ## Keyboard probe
 
@@ -122,7 +130,8 @@ state on exit or failure when running the corrected firmware.
 - [x] Confirm visually that the displayed patterns match their descriptions.
 - [x] Research macOS system-output capture and stereo level measurement.
 - [x] Build and verify a Zig terminal stereo VU meter using test audio.
-- [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
+- [x] Connect the audio meter to the keyboard LED driver and exercise the complete live capture-to-D8 path.
+- [ ] Visually confirm physical channel orientation, bar direction, and bass colouring.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
 collected and each implementation phase is completed.

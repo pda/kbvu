@@ -1,4 +1,5 @@
 const std = @import("std");
+const keyboard_lights = @import("keyboard_lights.zig");
 const meter = @import("meter.zig");
 
 const Capture = opaque {};
@@ -19,12 +20,13 @@ const Source = enum {
 const Options = struct {
     source: Source = .system,
     plain: bool = false,
+    keyboard: bool = false,
     frame_count: ?usize = null,
     launched_as_app: bool = false,
 };
 
 const usage =
-    \\Usage: kbvu-vu [--source system|test] [--plain] [--frames N]
+    \\Usage: kbvu-vu [--source system|test] [--plain] [--keyboard] [--frames N]
     \\
     \\Display a stereo RMS meter for the Mac's system output. The default ANSI
     \\view is two lines with ten Unicode cells per channel. Bar length is volume;
@@ -34,6 +36,7 @@ const usage =
     \\  --source system  Capture the global system-output mix (default)
     \\  --source test    Use deterministic stereo test tones; no permission needed
     \\  --plain          Print numeric dBFS snapshots without ANSI cursor movement
+    \\  --keyboard       Render stereo level and bass colour on the Air75 side LEDs
     \\  --frames N       Exit after N display frames (useful for automated tests)
     \\  -h, --help       Show this help
     \\
@@ -72,6 +75,13 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     defer if (capture) |active_capture| kbvu_capture_stop(active_capture);
+
+    var lights: ?keyboard_lights.Output = if (options.keyboard)
+        try keyboard_lights.Output.open()
+    else
+        null;
+    defer if (lights) |*output| output.close();
+    if (lights) |*output| try output.start();
 
     keep_running.store(true, .monotonic);
     const action: std.posix.Sigaction = .{
@@ -112,6 +122,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         const current = levels.update(&queue, meter.display_interval_seconds);
+        if (lights) |*output| try output.render(current);
         if (options.plain) {
             try meter.writePlainFrame(stdout, current);
         } else {
@@ -154,6 +165,8 @@ fn parseOptions(args: []const []const u8) !Options {
             }
         } else if (std.mem.eql(u8, arg, "--plain")) {
             options.plain = true;
+        } else if (std.mem.eql(u8, arg, "--keyboard")) {
+            options.keyboard = true;
         } else if (std.mem.eql(u8, arg, "--frames")) {
             index += 1;
             if (index >= args.len) return printUsageError("--frames requires a value");

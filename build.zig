@@ -69,7 +69,9 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-fobjc-arc"},
     });
     vu_module.linkFramework("CoreAudio", .{});
+    vu_module.linkFramework("CoreFoundation", .{});
     vu_module.linkFramework("Foundation", .{});
+    vu_module.linkFramework("IOKit", .{});
     vu_module.link_libc = true;
 
     const vu_executable = b.addExecutable(.{
@@ -137,11 +139,26 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const keyboard_lights_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/keyboard_lights.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    keyboard_lights_tests.root_module.addSystemFrameworkPath(framework_path);
+    keyboard_lights_tests.root_module.addLibraryPath(library_path);
+    keyboard_lights_tests.root_module.linkFramework("CoreFoundation", .{});
+    keyboard_lights_tests.root_module.linkFramework("IOKit", .{});
+    keyboard_lights_tests.root_module.link_libc = true;
+
     const run_keyboard_tests = b.addRunArtifact(keyboard_tests);
     const run_updater_tests = b.addRunArtifact(updater_tests);
     const run_meter_tests = b.addRunArtifact(meter_tests);
+    const run_keyboard_lights_tests = b.addRunArtifact(keyboard_lights_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_keyboard_tests.step);
     test_step.dependOn(&run_updater_tests.step);
     test_step.dependOn(&run_meter_tests.step);
+    test_step.dependOn(&run_keyboard_lights_tests.step);
 }
