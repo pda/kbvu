@@ -33,7 +33,11 @@ facts:
 - its Air75 V3 model data says `keyLight: 84`, `sideLight: 20`, and places the
   side-light colors in the final 20 entries; and
 - it defines five side-light modes: flowing, neon, static, breathing, and
-  rhythm.
+  rhythm; and
+- its S4 Air75 V3 driver implements `D2`, `D5`, and `D6`, but does not override
+  the base API's unsupported `setCustomLight` operation. The per-light custom
+  editor used by older protocol families is therefore unavailable on this
+  keyboard.
 
 This confirms that the two physical ten-LED bars are represented as 20 LEDs in
 the configurator's lighting model. NuPhy does not publish a protocol
@@ -111,13 +115,34 @@ the write by reading the same colors through `D2` and restores the old values
 on mismatch. Its authors hardware-tested `D8` for LED indices 0–6 (Escape and
 F1–F6), not the side LEDs.
 
-Combining its indexed RGB behavior with NuPhyIO's `84 + 20` model strongly
-suggests that side LEDs are indices `84…103`. This is a hypothesis, not yet a
-verified fact. The test program should read those indices first, write a
-reversible sweep in two `D8` packets, verify each write with `D2`, and restore
-the original colors when it exits. The sweep will also reveal physical order
-and whether the firmware permits direct writes while the side-light mode is
-active.
+NuPhyIO's `84 + 20` model and hardware `D2` reads confirm that side LEDs occupy
+indices `84…103`, but that does not make them valid `D8` signal-light targets.
+`D8` is absent from NuPhyIO's published-in-code S4 command enumeration; it is
+an undocumented firmware extension verified by N Agent Bridge only for the 84
+physical key LEDs.
+
+## Hardware test result
+
+The Zig probe was run against the connected Air75 V3 on 2026-08-19:
+
+1. `D5` reported side mode 4 (rhythm) and raw brightness 60.
+2. Reversible `D6` writes selected static mode 2 and red, green, blue, then dim
+   white. Every acknowledgement and delayed `D5` readback matched exactly.
+3. In static dim-white mode, `D2` reported all 20 side indices as `#131313`.
+   This confirms both that `84…103` are the bars and that `D6` controls all 20
+   as one zone (brightness accounts for the requested `#202020` being rendered
+   as `#131313`).
+4. `D8` was then sent in two packets for red indices `84…93` and blue indices
+   `94…103`. The firmware echoed both payloads, but delayed `D2` readback did
+   not contain the requested colors. Strict verification rejected the write.
+5. The pre-test colors and complete original `D6` state were restored, and a
+   read-only probe confirmed the original rhythm mode and brightness.
+
+The ACK is not evidence of mutation: this firmware echoes unsupported `D8`
+indices. There is no supported or hardware-verified stock-firmware command for
+setting either ten-LED bar independently, much less setting its ten pixels.
+The only side-light write exposed by the S4 protocol is the shared eight-byte
+effects-zone state in `D6`.
 
 ## Other useful references
 
@@ -135,6 +160,11 @@ active.
   `IOHIDManager` use for a NuPhy keyboard, but explicitly does not support Air
   V3 and relies on custom Air60 V2 firmware. Its two-byte host LED protocol does
   not apply here.
+- [nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) streams indexed
+  side-light RGB over Raw HID, but only after flashing its custom QMK handler
+  to an Air75 V2 (`19f5:3246`). Its firmware, MCU target, LED count, and HID
+  protocol do not apply to the Air75 V3 (`19f5:1028`). It nevertheless shows
+  what an eventual V3 custom-firmware solution would need to provide.
 - [Nudelta](https://github.com/donn/nudelta) reverse-engineers older NuPhy
   Console keyboards but explicitly excludes Air75 V2/V3/HE because NuPhyIO uses
   a different protocol.
