@@ -27,7 +27,8 @@ const usage =
     \\Usage: kbvu-vu [--source system|test] [--plain] [--frames N]
     \\
     \\Display a stereo RMS meter for the Mac's system output. The default ANSI
-    \\view is two lines with ten Unicode cells per channel. Press Ctrl-C to exit.
+    \\view is two lines with ten Unicode cells per channel. Bar length is volume;
+    \\the shared cyan-to-red colour shows low-frequency energy. Press Ctrl-C to exit.
     \\
     \\Options:
     \\  --source system  Capture the global system-output mix (default)
@@ -45,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
     const options = try parseOptions(args);
     if (options.source == .system and !options.launched_as_app) {
         std.debug.print(
-            "system capture must be launched as the signed app so macOS can grant it audio permission; use `zig build run-vu`\n",
+            "system capture must be launched as the signed app so macOS can grant it audio permission; run `zig build`, then `./zig-out/bin/kbvu-vu-live`\n",
             .{},
         );
         return error.UseAppLauncher;

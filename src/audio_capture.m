@@ -22,6 +22,7 @@ extern void kbvu_audio_samples(
     const float *right,
     uint32_t frame_count,
     uint32_t stride);
+extern void kbvu_audio_configure(void *context, double sample_rate_hz);
 
 static void set_error(char *buffer, size_t capacity, const char *message) {
     if (capacity == 0) return;
@@ -165,6 +166,7 @@ int kbvu_capture_start(
                 destroy_capture(capture);
                 return -2;
             }
+            kbvu_audio_configure(capture->context, capture->format.mSampleRate);
 
             CFStringRef tap_uid = NULL;
             AudioObjectPropertyAddress uid_address = {

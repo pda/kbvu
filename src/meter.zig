@@ -5,11 +5,27 @@ pub const minimum_dbfs: f64 = -50.0;
 pub const display_interval_seconds: f64 = 0.05;
 
 const queue_capacity = 256;
+const default_sample_rate_hz: f64 = 48_000.0;
+const bass_cutoff_hz: f64 = 200.0;
+const minimum_bass_db: f64 = -60.0;
 
 pub const BlockLevels = struct {
     left_sum_squares: f64,
     right_sum_squares: f64,
+    left_bass_sum_squares: f64,
+    right_bass_sum_squares: f64,
     sample_count: u32,
+};
+
+const LowPass = struct {
+    first: f64 = 0,
+    second: f64 = 0,
+
+    fn process(self: *LowPass, sample: f64, alpha: f64) f64 {
+        self.first += alpha * (sample - self.first);
+        self.second += alpha * (self.first - self.second);
+        return self.second;
+    }
 };
 
 /// A bounded single-producer, single-consumer queue. The Core Audio callback is
@@ -19,6 +35,9 @@ pub const SampleQueue = struct {
     write_index: std.atomic.Value(usize),
     read_index: std.atomic.Value(usize),
     dropped_blocks: std.atomic.Value(u64),
+    low_pass_alpha: f64,
+    left_low_pass: LowPass,
+    right_low_pass: LowPass,
 
     pub fn init() SampleQueue {
         return .{
@@ -26,7 +45,17 @@ pub const SampleQueue = struct {
             .write_index = .init(0),
             .read_index = .init(0),
             .dropped_blocks = .init(0),
+            .low_pass_alpha = lowPassAlpha(default_sample_rate_hz),
+            .left_low_pass = .{},
+            .right_low_pass = .{},
         };
+    }
+
+    /// Must be called before the producer starts writing samples.
+    pub fn configureSampleRate(self: *SampleQueue, sample_rate_hz: f64) void {
+        self.low_pass_alpha = lowPassAlpha(sample_rate_hz);
+        self.left_low_pass = .{};
+        self.right_low_pass = .{};
     }
 
     pub fn pushStrided(
@@ -41,6 +70,8 @@ pub const SampleQueue = struct {
         var block = BlockLevels{
             .left_sum_squares = 0,
             .right_sum_squares = 0,
+            .left_bass_sum_squares = 0,
+            .right_bass_sum_squares = 0,
             .sample_count = frame_count,
         };
         for (0..frame_count) |frame| {
@@ -49,6 +80,11 @@ pub const SampleQueue = struct {
             const right_sample: f64 = right[sample_index];
             block.left_sum_squares += left_sample * left_sample;
             block.right_sum_squares += right_sample * right_sample;
+
+            const left_bass = self.left_low_pass.process(left_sample, self.low_pass_alpha);
+            const right_bass = self.right_low_pass.process(right_sample, self.low_pass_alpha);
+            block.left_bass_sum_squares += left_bass * left_bass;
+            block.right_bass_sum_squares += right_bass * right_bass;
         }
 
         const write_index = self.write_index.load(.monotonic);
@@ -76,23 +112,43 @@ pub const StereoLevels = struct {
     right_dbfs: f64,
 };
 
+pub const MeterReading = struct {
+    left_dbfs: f64,
+    right_dbfs: f64,
+    /// Low-pass energy relative to full-band energy, expressed in decibels.
+    bass_db: f64,
+};
+
+pub const Rgb = struct {
+    red: u8,
+    green: u8,
+    blue: u8,
+};
+
 pub const Meter = struct {
     displayed: StereoLevels = .{
         .left_dbfs = minimum_dbfs,
         .right_dbfs = minimum_dbfs,
     },
+    displayed_bass_db: f64 = minimum_bass_db,
+    has_bass_measurement: bool = false,
 
     const decay_db_per_second = 30.0;
+    const bass_smoothing_seconds = 0.15;
 
-    pub fn update(self: *Meter, queue: *SampleQueue, elapsed_seconds: f64) StereoLevels {
+    pub fn update(self: *Meter, queue: *SampleQueue, elapsed_seconds: f64) MeterReading {
         var sums = BlockLevels{
             .left_sum_squares = 0,
             .right_sum_squares = 0,
+            .left_bass_sum_squares = 0,
+            .right_bass_sum_squares = 0,
             .sample_count = 0,
         };
         while (queue.pop()) |block| {
             sums.left_sum_squares += block.left_sum_squares;
             sums.right_sum_squares += block.right_sum_squares;
+            sums.left_bass_sum_squares += block.left_bass_sum_squares;
+            sums.right_bass_sum_squares += block.right_bass_sum_squares;
             sums.sample_count += block.sample_count;
         }
 
@@ -107,7 +163,32 @@ pub const Meter = struct {
         const decay = decay_db_per_second * elapsed_seconds;
         self.displayed.left_dbfs = applyBallistics(self.displayed.left_dbfs, measured.left_dbfs, decay);
         self.displayed.right_dbfs = applyBallistics(self.displayed.right_dbfs, measured.right_dbfs, decay);
-        return self.displayed;
+
+        const total_energy = sums.left_sum_squares + sums.right_sum_squares;
+        const combined_dbfs = if (sums.sample_count == 0)
+            minimum_dbfs
+        else
+            sumSquaresToDbfs(total_energy / 2.0, sums.sample_count);
+        const measured_bass_db = if (combined_dbfs <= minimum_dbfs)
+            minimum_bass_db
+        else
+            energyRatioToDb(
+                sums.left_bass_sum_squares + sums.right_bass_sum_squares,
+                total_energy,
+            );
+        if (!self.has_bass_measurement) {
+            self.displayed_bass_db = measured_bass_db;
+            self.has_bass_measurement = true;
+        } else {
+            const smoothing = 1.0 - @exp(-elapsed_seconds / bass_smoothing_seconds);
+            self.displayed_bass_db += smoothing * (measured_bass_db - self.displayed_bass_db);
+        }
+
+        return .{
+            .left_dbfs = self.displayed.left_dbfs,
+            .right_dbfs = self.displayed.right_dbfs,
+            .bass_db = self.displayed_bass_db,
+        };
     }
 };
 
@@ -117,42 +198,61 @@ pub fn segmentsForDbfs(dbfs: f64) usize {
     return @intFromFloat(@ceil((dbfs - minimum_dbfs) / 5.0));
 }
 
-pub fn writePlainFrame(writer: *std.Io.Writer, levels: StereoLevels) !void {
-    try writer.print("L {d:.1} dBFS ", .{levels.left_dbfs});
-    try writeBar(writer, levels.left_dbfs, false);
-    try writer.print("\nR {d:.1} dBFS ", .{levels.right_dbfs});
-    try writeBar(writer, levels.right_dbfs, false);
+pub fn writePlainFrame(writer: *std.Io.Writer, reading: MeterReading) !void {
+    const color = colorForBass(reading.bass_db);
+    const bass_percent = bassPercent(reading.bass_db);
+    try writer.print("L {d:.1} dBFS ", .{reading.left_dbfs});
+    try writeBar(writer, reading.left_dbfs, color, false);
+    try writer.print(
+        " bass {d:.1}% ({d:.1} dB rel) rgb({d},{d},{d})",
+        .{ bass_percent, reading.bass_db, color.red, color.green, color.blue },
+    );
+    try writer.print("\nR {d:.1} dBFS ", .{reading.right_dbfs});
+    try writeBar(writer, reading.right_dbfs, color, false);
+    try writer.print(
+        " bass {d:.1}% ({d:.1} dB rel) rgb({d},{d},{d})",
+        .{ bass_percent, reading.bass_db, color.red, color.green, color.blue },
+    );
     try writer.writeByte('\n');
 }
 
-pub fn writeAnsiFrame(writer: *std.Io.Writer, levels: StereoLevels, first_frame: bool) !void {
+pub fn writeAnsiFrame(writer: *std.Io.Writer, reading: MeterReading, first_frame: bool) !void {
+    const color = colorForBass(reading.bass_db);
     if (!first_frame) try writer.writeAll("\x1b[1A\r");
     try writer.writeAll("\x1b[2K\rL ");
-    try writeBar(writer, levels.left_dbfs, true);
+    try writeBar(writer, reading.left_dbfs, color, true);
     try writer.writeAll("\n\x1b[2K\rR ");
-    try writeBar(writer, levels.right_dbfs, true);
+    try writeBar(writer, reading.right_dbfs, color, true);
 }
 
 pub fn feedTestAudio(queue: *SampleQueue, frame_index: usize) void {
-    const frame_count = 320;
+    const frame_count = 2400;
     const target_dbfs = [_]StereoLevels{
         .{ .left_dbfs = -6, .right_dbfs = -18 },
         .{ .left_dbfs = -18, .right_dbfs = -6 },
         .{ .left_dbfs = -12, .right_dbfs = -12 },
         .{ .left_dbfs = minimum_dbfs, .right_dbfs = minimum_dbfs },
     };
+    const frequencies_hz = [_]f64{ 80, 2000, 200, 80 };
     const target = target_dbfs[frame_index % target_dbfs.len];
     const left_peak = dbfsToSinePeak(target.left_dbfs);
     const right_peak = dbfsToSinePeak(target.right_dbfs);
+    const frequency_hz = frequencies_hz[frame_index % frequencies_hz.len];
 
     var samples: [frame_count * 2]f32 = undefined;
     for (0..frame_count) |frame| {
-        // Twenty exact periods per block make the generated RMS deterministic.
-        const phase = 2.0 * std.math.pi * @as(f64, @floatFromInt(frame)) / 16.0;
+        // Every selected frequency completes an exact number of periods in a block.
+        const phase = 2.0 * std.math.pi * frequency_hz *
+            @as(f64, @floatFromInt(frame)) / default_sample_rate_hz;
         samples[frame * 2] = @floatCast(@sin(phase) * left_peak);
         samples[frame * 2 + 1] = @floatCast(@sin(phase) * right_peak);
     }
     queue.pushStrided(samples[0..].ptr, samples[1..].ptr, frame_count, 2);
+}
+
+export fn kbvu_audio_configure(context: ?*anyopaque, sample_rate_hz: f64) callconv(.c) void {
+    const queue: *SampleQueue = @ptrCast(@alignCast(context orelse return));
+    queue.configureSampleRate(sample_rate_hz);
 }
 
 export fn kbvu_audio_samples(
@@ -172,6 +272,19 @@ fn sumSquaresToDbfs(sum_squares: f64, sample_count: u32) f64 {
     return @max(minimum_dbfs, 20.0 * std.math.log10(rms));
 }
 
+fn lowPassAlpha(sample_rate_hz: f64) f64 {
+    return 1.0 - @exp(-2.0 * std.math.pi * bass_cutoff_hz / sample_rate_hz);
+}
+
+fn energyRatioToDb(filtered_energy: f64, total_energy: f64) f64 {
+    const ratio = std.math.clamp(filtered_energy / total_energy, 0.000001, 1.0);
+    return 10.0 * std.math.log10(ratio);
+}
+
+fn bassPercent(bass_db: f64) f64 {
+    return 100.0 * std.math.pow(f64, 10.0, bass_db / 10.0);
+}
+
 fn applyBallistics(displayed: f64, measured: f64, decay: f64) f64 {
     if (measured >= displayed) return measured;
     return @max(measured, displayed - decay);
@@ -182,17 +295,42 @@ fn dbfsToSinePeak(dbfs: f64) f64 {
     return std.math.pow(f64, 10.0, dbfs / 20.0) * std.math.sqrt2;
 }
 
-fn writeBar(writer: *std.Io.Writer, dbfs: f64, ansi: bool) !void {
+pub fn colorForBass(bass_db: f64) Rgb {
+    const cyan = Rgb{ .red = 51, .green = 199, .blue = 255 };
+    const yellow = Rgb{ .red = 255, .green = 210, .blue = 63 };
+    const red = Rgb{ .red = 255, .green = 59, .blue = 48 };
+    if (bass_db <= -20.0) return cyan;
+    if (bass_db < -10.0) return interpolateColor(cyan, yellow, (bass_db + 20.0) / 10.0);
+    if (bass_db < -4.0) return interpolateColor(yellow, red, (bass_db + 10.0) / 6.0);
+    return red;
+}
+
+fn interpolateColor(start: Rgb, end: Rgb, amount: f64) Rgb {
+    return .{
+        .red = interpolateByte(start.red, end.red, amount),
+        .green = interpolateByte(start.green, end.green, amount),
+        .blue = interpolateByte(start.blue, end.blue, amount),
+    };
+}
+
+fn interpolateByte(start: u8, end: u8, amount: f64) u8 {
+    const start_float: f64 = @floatFromInt(start);
+    const end_float: f64 = @floatFromInt(end);
+    return @intFromFloat(@round(start_float + amount * (end_float - start_float)));
+}
+
+fn writeBar(writer: *std.Io.Writer, dbfs: f64, color: Rgb, ansi: bool) !void {
     const filled = segmentsForDbfs(dbfs);
-    for (0..bar_cell_count) |cell| {
-        if (ansi) {
-            const color = if (cell < filled)
-                if (cell < 6) "\x1b[32m" else if (cell < 8) "\x1b[33m" else "\x1b[31m"
-            else
-                "\x1b[2;37m";
-            try writer.writeAll(color);
-        }
-        try writer.writeAll(if (cell < filled) "▪" else "▫");
+    if (filled != 0) {
+        if (ansi) try writer.print(
+            "\x1b[38;2;{d};{d};{d}m",
+            .{ color.red, color.green, color.blue },
+        );
+        for (0..filled) |_| try writer.writeAll("▪");
+    }
+    if (filled != bar_cell_count) {
+        if (ansi) try writer.writeAll("\x1b[2;37m");
+        for (filled..bar_cell_count) |_| try writer.writeAll("▫");
     }
     if (ansi) try writer.writeAll("\x1b[0m");
 }
@@ -233,6 +371,56 @@ test "generated stereo test tone has its documented levels" {
     const levels = meter.update(&queue, display_interval_seconds);
     try std.testing.expectApproxEqAbs(-6.0, levels.left_dbfs, 0.001);
     try std.testing.expectApproxEqAbs(-18.0, levels.right_dbfs, 0.001);
+    try std.testing.expect(levels.bass_db > -3.0);
+}
+
+test "bass measurement distinguishes low and high frequencies without changing RMS" {
+    const test_sample_rate_hz = 44_100.0;
+    const frame_count = 4410;
+    const peak = dbfsToSinePeak(-12.0);
+    var samples: [frame_count * 2]f32 = undefined;
+
+    var low_queue = SampleQueue.init();
+    low_queue.configureSampleRate(test_sample_rate_hz);
+    for (0..frame_count) |frame| {
+        const phase = 2.0 * std.math.pi * 80.0 *
+            @as(f64, @floatFromInt(frame)) / test_sample_rate_hz;
+        const sample: f32 = @floatCast(@sin(phase) * peak);
+        samples[frame * 2] = sample;
+        samples[frame * 2 + 1] = sample;
+    }
+    low_queue.pushStrided(samples[0..].ptr, samples[1..].ptr, frame_count, 2);
+    var low_meter = Meter{};
+    const low = low_meter.update(&low_queue, display_interval_seconds);
+
+    var high_queue = SampleQueue.init();
+    high_queue.configureSampleRate(test_sample_rate_hz);
+    for (0..frame_count) |frame| {
+        const phase = 2.0 * std.math.pi * 2000.0 *
+            @as(f64, @floatFromInt(frame)) / test_sample_rate_hz;
+        const sample: f32 = @floatCast(@sin(phase) * peak);
+        samples[frame * 2] = sample;
+        samples[frame * 2 + 1] = sample;
+    }
+    high_queue.pushStrided(samples[0..].ptr, samples[1..].ptr, frame_count, 2);
+    var high_meter = Meter{};
+    const high = high_meter.update(&high_queue, display_interval_seconds);
+
+    try std.testing.expectApproxEqAbs(-12.0, low.left_dbfs, 0.001);
+    try std.testing.expectApproxEqAbs(low.left_dbfs, high.left_dbfs, 0.001);
+    try std.testing.expect(low.bass_db > -3.0);
+    try std.testing.expect(high.bass_db < -30.0);
+}
+
+test "bass color falls toward neutral when audio stops" {
+    var queue = SampleQueue.init();
+    var meter = Meter{};
+    feedTestAudio(&queue, 0);
+    const playing = meter.update(&queue, display_interval_seconds);
+    const silent = meter.update(&queue, display_interval_seconds);
+
+    try std.testing.expect(silent.bass_db < playing.bass_db);
+    try std.testing.expect(silent.bass_db > minimum_bass_db);
 }
 
 test "meter attacks immediately and decays by elapsed time" {
@@ -257,13 +445,21 @@ test "dBFS maps to ten five-decibel cells" {
     try std.testing.expectEqual(@as(usize, 10), segmentsForDbfs(3));
 }
 
+test "bass color runs from cyan through yellow to red" {
+    try std.testing.expectEqual(Rgb{ .red = 51, .green = 199, .blue = 255 }, colorForBass(-20));
+    try std.testing.expectEqual(Rgb{ .red = 153, .green = 205, .blue = 159 }, colorForBass(-15));
+    try std.testing.expectEqual(Rgb{ .red = 255, .green = 210, .blue = 63 }, colorForBass(-10));
+    try std.testing.expectEqual(Rgb{ .red = 255, .green = 59, .blue = 48 }, colorForBass(-4));
+}
+
 test "plain renderer is deterministic and contains ten cells per channel" {
-    var buffer: [256]u8 = undefined;
+    var buffer: [512]u8 = undefined;
     var writer = std.Io.Writer.fixed(&buffer);
-    try writePlainFrame(&writer, .{ .left_dbfs = -6, .right_dbfs = -18 });
+    try writePlainFrame(&writer, .{ .left_dbfs = -6, .right_dbfs = -18, .bass_db = -3 });
 
     try std.testing.expectEqualStrings(
-        "L -6.0 dBFS ▪▪▪▪▪▪▪▪▪▫\nR -18.0 dBFS ▪▪▪▪▪▪▪▫▫▫\n",
+        "L -6.0 dBFS ▪▪▪▪▪▪▪▪▪▫ bass 50.1% (-3.0 dB rel) rgb(255,59,48)\n" ++
+            "R -18.0 dBFS ▪▪▪▪▪▪▪▫▫▫ bass 50.1% (-3.0 dB rel) rgb(255,59,48)\n",
         writer.buffered(),
     );
 }
@@ -271,9 +467,13 @@ test "plain renderer is deterministic and contains ten cells per channel" {
 test "ANSI renderer uses exactly two terminal lines" {
     var buffer: [1024]u8 = undefined;
     var writer = std.Io.Writer.fixed(&buffer);
-    try writeAnsiFrame(&writer, .{ .left_dbfs = -6, .right_dbfs = -18 }, true);
+    try writeAnsiFrame(&writer, .{ .left_dbfs = -6, .right_dbfs = -18, .bass_db = -3 }, true);
 
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, writer.buffered(), "\n"));
     try std.testing.expect(std.mem.startsWith(u8, writer.buffered(), "\x1b[2K\rL "));
     try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "\n\x1b[2K\rR ") != null);
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, writer.buffered(), "\x1b[38;2;255;59;48m"),
+    );
 }

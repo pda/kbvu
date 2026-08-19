@@ -37,8 +37,10 @@ model-specific firmware change is required for stereo VU output. See
 
 The macOS audio half is implemented independently of the keyboard path. A
 first-party Core Audio process tap captures the global stereo output mix, and a
-Zig RMS meter renders two ten-cell Unicode/ANSI rows. It can therefore visualize
-Spotify and other application audio without a virtual loopback device. See
+Zig RMS meter renders two ten-cell Unicode/ANSI rows. The independent bar
+lengths show left/right volume, while their shared colour runs from cyan to red
+as the mix becomes more bass-heavy. It can therefore visualize Spotify and
+other application audio without a virtual loopback device. See
 [the audio research](docs/macos-audio.md) for the design and permission details.
 
 ## Terminal stereo VU meter
@@ -52,14 +54,20 @@ zig build test
 ./zig-out/bin/kbvu-vu --source test --plain --frames 4
 ```
 
-The plain mode emits numeric dBFS and exactly ten cells for each channel, making
-it suitable for tests and agent inspection. Omit `--plain` for the compact live
-ANSI display:
+The plain mode emits numeric dBFS, low-frequency energy percentage/relative dB,
+RGB, and exactly ten cells for each channel, making both magnitude and colour
+suitable for tests and agent inspection. Its deterministic sequence includes
+bass, treble, and silence. Omit `--plain` for the compact live ANSI display:
 
 ```text
 L ▪▪▪▪▪▪▪▪▪▫
 R ▪▪▪▪▪▪▪▫▫▫
 ```
+
+The ANSI view uses 24-bit foreground colour on every filled `▪`: cyan means
+little energy below roughly 200 Hz, yellow means a mixed spectrum, and red means
+bass-heavy. Empty `▫` cells remain dim and neutral. Both rows use the same
+spectral colour so their lengths remain an unambiguous stereo level comparison.
 
 To meter live system output on macOS 14.2 or newer, use the app launcher from an
 interactive terminal:

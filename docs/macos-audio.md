@@ -109,27 +109,46 @@ independently. A fast attack and time-based decay are applied outside the audio
 callback so the bars remain readable between callbacks without making the
 measurement depend on the hardware block size.
 
-`--plain` exposes the numeric dBFS values as well as ten-segment bars. The
-built-in `--source test` produces exact-period stereo sine blocks at −6/−18,
-−18/−6, and −12/−12 dBFS followed by silence. It traverses the same strided
-sample, RMS, ballistics, and rendering code as live capture without depending on
-TCC or an output device. `--frames N` makes the executable terminate
-deterministically for automated checks.
+Colour represents spectral balance rather than a single “dominant frequency.”
+The callback passes each channel through a two-pole 200 Hz low-pass filter and
+also accumulates its sum of squares. For combined left/right low-pass energy
+\(s_b\) and full-band energy \(s\), the displayed bass amount is:
+
+\[b = 10\log_{10}(\operatorname{clamp}(s_b/s, 10^{-6}, 1))\]
+
+The filter coefficient is calculated from the actual Core Audio tap sample
+rate. This adds fixed state and arithmetic but no allocation, locking, FFT, or
+other real-time-unsafe work to the callback. Both bars share one smoothed value:
+at or below −20 dB it is cyan, at −10 dB it is yellow, and at or above −4 dB it
+is red, with 24-bit RGB interpolation between those points. Audio at or below
+the −50 dBFS display floor moves the colour toward cyan instead of allowing
+noise to choose it. Only filled cells are coloured; dim empty cells still show
+the ten-cell capacity.
+
+`--plain` exposes numeric dBFS, bass percentage/relative dB, RGB, and the
+ten-segment bars. The built-in `--source test` produces exact-period 80 Hz,
+2 kHz, and 200 Hz stereo sine blocks at −6/−18, −18/−6, and −12/−12 dBFS
+followed by silence. It traverses the same strided sample, RMS, spectral,
+ballistics, and rendering code as live capture without depending on TCC or an
+output device. `--frames N` makes the executable terminate deterministically
+for automated checks.
 
 ## Implementation and verification
 
 - `src/audio_capture.m` owns the private unmuted tap, tap-only aggregate,
-  Float32 layout checks, IOProc, and reverse-order cleanup.
+  Float32 layout checks, sample-rate handoff, IOProc, and reverse-order cleanup.
 - `src/meter.zig` owns the fixed lock-free queue, independent stereo RMS,
-  30 dB/s decay, ten-cell mapping, test source, and plain/ANSI renderers.
+  low-frequency energy analysis, 30 dB/s decay, ten-cell mapping, test source,
+  and plain/ANSI renderers.
 - `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, and signal
   cleanup.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
 
-`zig build test` verifies interleaved channel identity, known RMS values,
-ballistics, all dBFS cell boundaries, deterministic plain rendering, and the
-two-line ANSI shape. Running
+`zig build test` verifies interleaved channel identity, known RMS values, 80 Hz
+versus 2 kHz separation, colour interpolation and silence behavior, ballistics,
+all dBFS cell boundaries, deterministic plain rendering, and the two-line
+truecolour ANSI shape. Running
 `./zig-out/bin/kbvu-vu --source test --plain --frames 4` verifies the complete
 test-source executable path. A LaunchServices-started live probe captured a
 generated `afplay` WAV at approximately −21 dBFS left and −33 dBFS right,
