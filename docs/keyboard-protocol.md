@@ -331,7 +331,7 @@ The old process had selected backlight effect 21 and fixed-colour mode. A first
 one-off repair changed only byte 0 back to the recorded effect 6. That state
 looked unlike the user's previous effect. N Agent Bridge's field mapping then
 identified byte 4 as the backlight `isRGB` flag, so a second repair changed it
-from 0 to 1. Exact `D5` readback produced the current reconstructed state:
+from 0 to 1. Exact `D5` readback produced this pre-reset reconstructed state:
 
 ```text
 06 32 01 00 01 00 00 05 80 04 3c 02 00 00 00 ff ae
@@ -371,6 +371,24 @@ The [NuPhy shortcut guide](https://nuphy.dev/?en), which explicitly includes
 Air75 V3, also documents holding `Fn` + `[` for three seconds to restore factory
 settings. Use NuPhyIO's visible Reset action in preference to sending raw `F1`,
 and only after accepting the configuration loss.
+
+The user subsequently invoked NuPhyIO's Reset and closed NuPhyIO. A read-only
+probe then captured the complete factory lighting state:
+
+```text
+06 32 02 00 01 00 00 05 80 04 3c 02 01 00 ff 00 00
+```
+
+The factory reset preserved the previously recorded headline values—backlight
+mode 6, side mode 4, and side brightness 60—but proved that the reconstruction
+above was not fully factory-default. It changed byte 2, the backlight speed,
+from 1 to 2; changed side-light selection byte 12 from 0 to 1; and changed the
+side RGB bytes 14–16 from `00 ff ae` to `ff 00 00`. `D2` reported all 20
+rendered side entries as black while the rhythm effect was idle. The speed
+difference confirms that the user's visual concern was grounded, although
+`kbvu` and both one-off repairs had preserved the pre-reset value 1 rather than
+changing it themselves. The probe now prints the complete `D5` state so future
+baselines can be recorded before any lighting write.
 
 ## Official firmware provenance and static analysis
 

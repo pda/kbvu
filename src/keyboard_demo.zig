@@ -54,6 +54,9 @@ pub fn main(init: std.process.Init) !void {
         "macOS profile: backlight mode={d}, side mode={d}, side brightness={d}/255\n",
         .{ state[0], state[9], state[10] },
     );
+    std.debug.print("Raw D5 lighting state:", .{});
+    for (state) |byte| std.debug.print(" {x:0>2}", .{byte});
+    std.debug.print("\n", .{});
 
     var original: [keyboard.side_light_count]Color = undefined;
     try device.readColors(keyboard.side_light_first_index, &original);
