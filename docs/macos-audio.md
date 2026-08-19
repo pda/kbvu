@@ -71,15 +71,18 @@ of an aggregate containing a tap requests **System Audio Recording Only**
 permission. This differs from microphone access and from ScreenCaptureKit's
 screen-recording path.
 
-On macOS 26, `kbvu` is therefore built as a small `.app` bundle with a stable
-bundle identifier even though its executable is terminal-oriented. It must be
-started through LaunchServices: directly executing a child process from a
-terminal makes that terminal the TCC-responsible application, and third-party
-terminals may not carry `NSAudioCaptureUsageDescription`.
-`zig-out/bin/kbvu-vu-live` uses `open` to give `kbvu-vu.app` its own TCC identity
-while attaching its standard streams to the current TTY. The launcher forwards
-Ctrl-C directly, and the display leaves the cursor enabled so an abrupt exit
-cannot leave the terminal in a damaged state.
+On macOS 26, `kbvu` is therefore built as a menu-bar `.app` bundle with a stable
+bundle identifier. `open zig-out/kbvu.app` starts system capture plus keyboard
+output without a terminal or Dock icon; its menu provides the normal Quit path.
+For diagnostics, `zig-out/bin/kbvu-vu-live` uses `open` to give the same app its
+own TCC identity while attaching its standard streams to the current TTY. That
+launcher forwards Ctrl-C directly. Terminal output is explicit: `--ansi` selects
+the compact live view and `--plain` selects numeric snapshots.
+
+Both paths must start the bundle through LaunchServices. Directly executing a
+child process from a terminal makes that terminal the TCC-responsible
+application, and third-party terminals may not carry
+`NSAudioCaptureUsageDescription`.
 
 Keeping a stable signing identity avoids turning each rebuild into a different
 TCC client. Development can use one ad-hoc-signed final build, but changing its
@@ -144,9 +147,13 @@ for automated checks.
   onto side indices `84…103` in reverse index order so each bar grows upward,
   selects private renderer mode 5, and restores the saved RGB table and lighting
   state on exit.
-- `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, and signal
-  cleanup. With `--keyboard`, this non-real-time loop also performs D8 writes;
-  the Core Audio callback never touches HID.
+- `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, signal
+  cleanup, and the opt-in plain/ANSI output selection. With `--keyboard`, this
+  non-real-time loop also performs D8 writes; the Core Audio callback never
+  touches HID.
+- `src/menu_bar.m` owns the AppKit status item, Quit action, nonblocking event
+  pump, and startup-error alerts. Opening the bundle with no arguments enables
+  this UI and keyboard output by default.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
 
@@ -164,6 +171,11 @@ usage key; this is why the supported live path is `zig-out/bin/kbvu-vu-live`
 rather than the nested executable. A later `--keyboard` run completed 130 live
 system-audio frames while changing both bar lengths and bass RGB, then a fresh
 keyboard probe confirmed restoration to backlight mode 6 and stock side mode 4.
+The menu-bar build was subsequently smoke-tested through LaunchServices: it
+remained active while capturing and driving the keyboard, handled `SIGTERM`
+through the same orderly stop path as its Quit action, and a post-run probe again
+confirmed restoration to modes 6 and 4. Visual testing confirmed left/right
+orientation, upward growth, and bass-sensitive colour on the physical bars.
 
 ## Open-source corroboration
 

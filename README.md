@@ -44,12 +44,40 @@ for the exact manifest, trial history, updater, and recovery evidence.
 
 The macOS audio and keyboard paths are now connected. A first-party Core Audio
 process tap captures the global stereo output mix, and the 20 Hz Zig display
-loop renders it both in the terminal and, with `--keyboard`, on the two physical
-bars. Independent lengths show left/right volume; their shared colour runs from
-cyan through yellow to red as the mix becomes more bass-heavy. HID work remains
-outside the real-time audio callback, and normal exit restores the saved RGB
-table and lighting modes. See [the audio research](docs/macos-audio.md) for the
-capture design and permission details.
+loop renders it on the two physical bars. Independent lengths show left/right
+volume; their shared colour runs from cyan through yellow to saturated red as
+the mix becomes more bass-heavy. HID work remains outside the real-time audio
+callback, and normal exit restores the saved RGB table and lighting modes. The
+signed build is a menu-bar app for ongoing use; terminal rendering remains
+available as an opt-in diagnostic. See [the audio research](docs/macos-audio.md)
+for the capture design and permission details.
+
+## Run continuously as a menu-bar app
+
+Build and open the signed app:
+
+```console
+zig build
+open zig-out/kbvu.app
+```
+
+Opening the app with no arguments starts system-audio capture and keyboard
+output. The waveform item in the macOS menu bar shows that Keyboard VU is
+running. Choose **Quit Keyboard VU** from that menu to stop it and restore the
+keyboard's complete pre-run lighting state. The app has no Dock icon and emits
+no terminal output.
+
+The first run asks for **System Audio Recording Only** access. Keyboard output
+requires the corrected firmware documented in [the patch notes](docs/firmware-patch.md),
+a wired USB connection, and NuPhyIO to be closed. If either audio capture or the
+keyboard cannot start, the app displays an error instead of disappearing
+silently.
+
+For launch-at-login use, first copy `zig-out/kbvu.app` to a stable location
+such as `/Applications/kbvu.app`. Open that copy once and grant audio
+permission, then add it under **System Settings → General → Login Items &
+Extensions → Open at Login**. Re-copy it after rebuilding. No daemon or
+LaunchAgent is needed.
 
 ## Terminal stereo VU meter
 
@@ -65,7 +93,7 @@ zig build test
 The plain mode emits numeric dBFS, low-frequency energy percentage/relative dB,
 RGB, and exactly ten cells for each channel, making both magnitude and colour
 suitable for tests and agent inspection. Its deterministic sequence includes
-bass, treble, and silence. Omit `--plain` for the compact live ANSI display:
+bass, treble, and silence. Use `--ansi` for the compact live display:
 
 ```text
 L ▪▪▪▪▪▪▪▪▪▫
@@ -76,18 +104,18 @@ The ANSI view uses 24-bit foreground colour on every filled `▪`: cyan means
 little energy below roughly 200 Hz, yellow means a mixed spectrum, and red means
 bass-heavy. Empty `▫` cells remain dim and neutral. Both rows use the same
 spectral colour so their lengths remain an unambiguous stereo level comparison.
+Terminal output is disabled unless `--ansi` or `--plain` is supplied.
 
-To meter live system output on macOS 14.2 or newer, use the app launcher from an
-interactive terminal:
+For live diagnostics on macOS 14.2 or newer, use the app launcher from an
+interactive terminal. `--keyboard` is optional:
 
 ```console
-./zig-out/bin/kbvu-vu-live
-./zig-out/bin/kbvu-vu-live --keyboard
+./zig-out/bin/kbvu-vu-live --ansi
+./zig-out/bin/kbvu-vu-live --ansi --keyboard
 ```
 
-The first run asks for **System Audio Recording Only** access. The launcher is
-important: it starts the signed `zig-out/kbvu-vu.app` through LaunchServices so
-TCC attributes the request to `kbvu-vu`, while routing ANSI output and Ctrl-C
+The launcher starts `zig-out/kbvu.app` through LaunchServices so TCC
+attributes the request to `kbvu-vu`, while routing requested output and Ctrl-C
 back to the terminal. Directly executing the app's nested binary makes the
 terminal application responsible for permission and is intentionally rejected.
 An ad-hoc signature is used when no Apple Development identity is available, so
@@ -131,7 +159,8 @@ state on exit or failure when running the corrected firmware.
 - [x] Research macOS system-output capture and stereo level measurement.
 - [x] Build and verify a Zig terminal stereo VU meter using test audio.
 - [x] Connect the audio meter to the keyboard LED driver and exercise the complete live capture-to-D8 path.
-- [ ] Visually confirm physical channel orientation, bar direction, and bass colouring.
+- [x] Visually confirm physical channel orientation, upward bar direction, and bass colouring.
+- [x] Package ongoing operation as a macOS menu-bar app with opt-in terminal output.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
 collected and each implementation phase is completed.

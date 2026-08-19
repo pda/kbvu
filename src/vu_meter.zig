@@ -11,30 +11,43 @@ extern fn kbvu_capture_start(
     error_capacity: usize,
 ) callconv(.c) c_int;
 extern fn kbvu_capture_stop(capture: *Capture) callconv(.c) void;
+extern fn kbvu_is_app_bundle() callconv(.c) c_int;
+extern fn kbvu_menubar_start() callconv(.c) c_int;
+extern fn kbvu_menubar_pump() callconv(.c) void;
+extern fn kbvu_menubar_show_error(message: [*:0]const u8) callconv(.c) void;
+extern fn kbvu_menubar_stop() callconv(.c) void;
 
 const Source = enum {
     system,
     test_audio,
 };
 
+const OutputMode = enum {
+    none,
+    plain,
+    ansi,
+};
+
 const Options = struct {
     source: Source = .system,
-    plain: bool = false,
+    output: OutputMode = .none,
     keyboard: bool = false,
+    menubar: bool = false,
     frame_count: ?usize = null,
     launched_as_app: bool = false,
 };
 
 const usage =
-    \\Usage: kbvu-vu [--source system|test] [--plain] [--keyboard] [--frames N]
+    \\Usage: kbvu-vu [--source system|test] [--ansi|--plain] [--keyboard] [--frames N]
     \\
-    \\Display a stereo RMS meter for the Mac's system output. The default ANSI
-    \\view is two lines with ten Unicode cells per channel. Bar length is volume;
-    \\the shared cyan-to-red colour shows low-frequency energy. Press Ctrl-C to exit.
+    \\Measure the Mac's stereo system output. Terminal output is disabled by
+    \\default. Bar length is volume; the shared cyan-to-red colour shows
+    \\low-frequency energy. Press Ctrl-C to exit.
     \\
     \\Options:
     \\  --source system  Capture the global system-output mix (default)
     \\  --source test    Use deterministic stereo test tones; no permission needed
+    \\  --ansi           Show the compact live ANSI meter in the terminal
     \\  --plain          Print numeric dBFS snapshots without ANSI cursor movement
     \\  --keyboard       Render stereo level and bass colour on the Air75 side LEDs
     \\  --frames N       Exit after N display frames (useful for automated tests)
@@ -46,14 +59,28 @@ var keep_running = std.atomic.Value(bool).init(true);
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    const options = try parseOptions(args);
+    var options = try parseOptions(args);
+    if (args.len == 1 and kbvu_is_app_bundle() != 0) {
+        options.keyboard = true;
+        options.menubar = true;
+        options.launched_as_app = true;
+    }
+    if (!options.keyboard and options.output == .none) {
+        return printUsageError("select --keyboard, --ansi, or --plain");
+    }
     if (options.source == .system and !options.launched_as_app) {
         std.debug.print(
-            "system capture must be launched as the signed app so macOS can grant it audio permission; run `zig build`, then `./zig-out/bin/kbvu-vu-live`\n",
+            "system capture must be launched as the signed app so macOS can grant it audio permission; run `zig build`, then `open zig-out/kbvu.app` or use `./zig-out/bin/kbvu-vu-live --ansi`\n",
             .{},
         );
         return error.UseAppLauncher;
     }
+
+    keep_running.store(true, .monotonic);
+    if (options.menubar) {
+        if (kbvu_menubar_start() != 0) return error.MenuBarStartFailed;
+    }
+    defer if (options.menubar) kbvu_menubar_stop();
 
     var queue = meter.SampleQueue.init();
     var capture: ?*Capture = null;
@@ -71,19 +98,33 @@ pub fn main(init: std.process.Init) !void {
                 "audio capture error: {s}\nEnable System Settings → Privacy & Security → System Audio Recording Only for kbvu-vu, then retry.\n",
                 .{message},
             );
+            if (options.menubar) kbvu_menubar_show_error(
+                "System audio capture failed. Enable Keyboard VU in System Settings → Privacy & Security → System Audio Recording Only, then reopen it.",
+            );
             return error.AudioCaptureFailed;
         }
     }
     defer if (capture) |active_capture| kbvu_capture_stop(active_capture);
 
-    var lights: ?keyboard_lights.Output = if (options.keyboard)
-        try keyboard_lights.Output.open()
-    else
-        null;
+    var lights: ?keyboard_lights.Output = null;
+    if (options.keyboard) {
+        lights = keyboard_lights.Output.open() catch |err| {
+            std.debug.print("keyboard open error: {t}\n", .{err});
+            if (options.menubar) kbvu_menubar_show_error(
+                "The NuPhy Air75 V3 could not be opened. Connect it directly by USB and close NuPhyIO, then reopen Keyboard VU.",
+            );
+            return err;
+        };
+    }
     defer if (lights) |*output| output.close();
-    if (lights) |*output| try output.start();
+    if (lights) |*output| output.start() catch |err| {
+        std.debug.print("keyboard initialization error: {t}\n", .{err});
+        if (options.menubar) kbvu_menubar_show_error(
+            "The NuPhy Air75 V3 lighting could not be initialized. Confirm that the corrected kbvu firmware is installed and close NuPhyIO.",
+        );
+        return err;
+    };
 
-    keep_running.store(true, .monotonic);
     const action: std.posix.Sigaction = .{
         .handler = .{ .handler = handleInterrupt },
         .mask = std.posix.sigemptyset(),
@@ -99,9 +140,9 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [2048]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
-    defer stdout.flush() catch {};
+    defer if (options.output != .none) stdout.flush() catch {};
 
-    defer if (!options.plain) {
+    defer if (options.output == .ansi) {
         stdout.writeAll("\x1b[0m\n") catch {};
         stdout.flush() catch {};
     };
@@ -111,6 +152,10 @@ pub fn main(init: std.process.Init) !void {
     while (keep_running.load(.monotonic) and
         (options.frame_count == null or frame_index < options.frame_count.?))
     {
+        if (options.menubar) {
+            kbvu_menubar_pump();
+            if (!keep_running.load(.monotonic)) break;
+        }
         if (options.source == .test_audio) {
             meter.feedTestAudio(&queue, frame_index);
         } else {
@@ -122,13 +167,19 @@ pub fn main(init: std.process.Init) !void {
         }
 
         const current = levels.update(&queue, meter.display_interval_seconds);
-        if (lights) |*output| try output.render(current);
-        if (options.plain) {
-            try meter.writePlainFrame(stdout, current);
-        } else {
-            try meter.writeAnsiFrame(stdout, current, frame_index == 0);
+        if (lights) |*output| output.render(current) catch |err| {
+            std.debug.print("keyboard render error: {t}\n", .{err});
+            if (options.menubar) kbvu_menubar_show_error(
+                "The NuPhy Air75 V3 stopped accepting lighting updates. Check its USB connection and close NuPhyIO.",
+            );
+            return err;
+        };
+        switch (options.output) {
+            .none => {},
+            .plain => try meter.writePlainFrame(stdout, current),
+            .ansi => try meter.writeAnsiFrame(stdout, current, frame_index == 0),
         }
-        try stdout.flush();
+        if (options.output != .none) try stdout.flush();
         frame_index += 1;
 
         if (options.source == .test_audio and keep_running.load(.monotonic) and
@@ -163,8 +214,12 @@ fn parseOptions(args: []const []const u8) !Options {
             } else {
                 return printUsageError("--source must be system or test");
             }
+        } else if (std.mem.eql(u8, arg, "--ansi")) {
+            if (options.output != .none) return printUsageError("--ansi and --plain cannot be combined");
+            options.output = .ansi;
         } else if (std.mem.eql(u8, arg, "--plain")) {
-            options.plain = true;
+            if (options.output != .none) return printUsageError("--ansi and --plain cannot be combined");
+            options.output = .plain;
         } else if (std.mem.eql(u8, arg, "--keyboard")) {
             options.keyboard = true;
         } else if (std.mem.eql(u8, arg, "--frames")) {
@@ -186,6 +241,10 @@ fn parseOptions(args: []const []const u8) !Options {
 }
 
 fn handleInterrupt(_: std.posix.SIG) callconv(.c) void {
+    kbvu_request_stop();
+}
+
+export fn kbvu_request_stop() callconv(.c) void {
     keep_running.store(false, .monotonic);
 }
 

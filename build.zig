@@ -68,6 +68,11 @@ pub fn build(b: *std.Build) void {
         .file = b.path("src/audio_capture.m"),
         .flags = &.{"-fobjc-arc"},
     });
+    vu_module.addCSourceFile(.{
+        .file = b.path("src/menu_bar.m"),
+        .flags = &.{"-fobjc-arc"},
+    });
+    vu_module.linkFramework("AppKit", .{});
     vu_module.linkFramework("CoreAudio", .{});
     vu_module.linkFramework("CoreFoundation", .{});
     vu_module.linkFramework("Foundation", .{});
@@ -82,18 +87,18 @@ pub fn build(b: *std.Build) void {
 
     const app_binary = b.addInstallFile(
         vu_executable.getEmittedBin(),
-        "kbvu-vu.app/Contents/MacOS/kbvu-vu",
+        "kbvu.app/Contents/MacOS/kbvu-vu",
     );
     const app_plist = b.addInstallFile(
         b.path("resources/Info.plist"),
-        "kbvu-vu.app/Contents/Info.plist",
+        "kbvu.app/Contents/Info.plist",
     );
     const sign_app = b.addSystemCommand(&.{
         "/usr/bin/codesign",
         "--force",
         "--sign",
         "-",
-        b.getInstallPath(.prefix, "kbvu-vu.app"),
+        b.getInstallPath(.prefix, "kbvu.app"),
     });
     sign_app.step.dependOn(&app_binary.step);
     sign_app.step.dependOn(&app_plist.step);

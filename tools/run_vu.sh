@@ -3,7 +3,7 @@
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-app=$(CDPATH= cd -- "$script_dir/.." && pwd)/kbvu-vu.app
+app=$(CDPATH= cd -- "$script_dir/.." && pwd)/kbvu.app
 if [ ! -d "$app" ]; then
     echo "kbvu-vu: app bundle not found at $app; run 'zig build' first" >&2
     exit 1
