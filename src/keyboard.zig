@@ -336,6 +336,10 @@ pub const Keyboard = struct {
     pub fn setColorsVerified(self: *Keyboard, first_index: u8, colors: []const Color) !void {
         try self.setColors(first_index, colors);
         _ = c.usleep(100_000);
+        try self.verifyColors(first_index, colors);
+    }
+
+    pub fn verifyColors(self: *Keyboard, first_index: u8, colors: []const Color) !void {
         var actual: [side_light_count]Color = undefined;
         if (colors.len > actual.len) return error.TooManyColors;
         try self.readColors(first_index, actual[0..colors.len]);

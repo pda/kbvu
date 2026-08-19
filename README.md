@@ -27,6 +27,10 @@ writable LEDs. The Zig hardware probe established two distinct behaviors:
   `84…103`, but `D2` readback remains unchanged. `D8` is an override for the
   84 key LEDs only.
 
+A five-second manual check confirmed the same result visually: the supported
+`D6` test changed both bars red, green, blue, and dim white, while the attempted
+`D8` red/blue split left both bars dim white.
+
 The official NuPhyIO S4 driver likewise leaves its per-light `setCustomLight`
 operation unimplemented for this keyboard. Independent host-driven side LEDs
 would therefore require new Air75 V3 firmware with a streaming HID command.
@@ -49,7 +53,8 @@ zig build
 
 `--probe` is read-only. The full run temporarily shows both bars in red, green,
 blue, and dim white through the supported whole-zone command. It then attempts
-independent red/blue bars, requires exact `D2` readback, reports
+independent red/blue bars, holds that request for `--hold-ms` so it can be
+checked visually, requires exact `D2` readback, reports
 `VerificationFailed` on the stock firmware, and restores the original state.
 
 ## Plan

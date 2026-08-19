@@ -135,7 +135,10 @@ The Zig probe was run against the connected Air75 V3 on 2026-08-19:
 4. `D8` was then sent in two packets for red indices `84…93` and blue indices
    `94…103`. The firmware echoed both payloads, but delayed `D2` readback did
    not contain the requested colors. Strict verification rejected the write.
-5. The pre-test colors and complete original `D6` state were restored, and a
+5. The requested `D8` pattern was held for five seconds before verification.
+   Manual observation confirmed that both bars remained dim white rather than
+   splitting red and blue.
+6. The pre-test colors and complete original `D6` state were restored, and a
    read-only probe confirmed the original rhythm mode and brightness.
 
 The ACK is not evidence of mutation: this firmware echoes unsupported `D8`

@@ -164,8 +164,13 @@ fn showIndexedPattern(
     hold_ms: u32,
 ) !void {
     std.debug.print("Indexed pattern: {s}\n", .{description});
-    try device.setColorsVerified(keyboard.side_light_first_index, colors);
+    try device.setColors(keyboard.side_light_first_index, colors);
+    std.debug.print(
+        "Observe the bars now for {d} ms; unsupported firmware will leave both bars dim white.\n",
+        .{hold_ms},
+    );
     keyboard.sleepMilliseconds(hold_ms);
+    try device.verifyColors(keyboard.side_light_first_index, colors);
 }
 
 fn printColors(label: []const u8, colors: []const Color) void {
