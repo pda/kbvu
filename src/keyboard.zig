@@ -140,6 +140,7 @@ const usage: i32 = 0;
 
 const command = struct {
     const get_firmware_info: u8 = 0xa1;
+    const get_light_count: u8 = 0xd1;
     const get_light_color: u8 = 0xd2;
     const get_light_state: u8 = 0xd5;
     const set_light_state: u8 = 0xd6;
@@ -254,6 +255,11 @@ pub const Keyboard = struct {
         var result: [8]u8 = undefined;
         @memcpy(&result, response.payload[0..8]);
         return result;
+    }
+
+    pub fn lightCount(self: *Keyboard) !u8 {
+        const response = try self.transact(command.get_light_count, 1, 0, 0, &.{});
+        return response.payload[0];
     }
 
     pub fn readLightingState(self: *Keyboard, handle: u8) !LightingState {

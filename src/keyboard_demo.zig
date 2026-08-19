@@ -46,6 +46,9 @@ pub fn main(init: std.process.Init) !void {
     for (firmware) |byte| std.debug.print(" {x:0>2}", .{byte});
     std.debug.print("\n", .{});
 
+    const light_count = try device.lightCount();
+    std.debug.print("Firmware light count: {d}\n", .{light_count});
+
     const state = try device.readLightingState(0);
     std.debug.print(
         "macOS profile: backlight mode={d}, side mode={d}, side brightness={d}/255\n",
@@ -56,7 +59,10 @@ pub fn main(init: std.process.Init) !void {
     try device.readColors(keyboard.side_light_first_index, &original);
     printColors("Side-light colors reported by D2 at indices 84..103", &original);
     if (probe_only) {
-        std.debug.print("Probe complete; no keyboard state was changed.\n", .{});
+        std.debug.print(
+            "Probe complete; no lighting or persistent configuration was changed.\n",
+            .{},
+        );
         return;
     }
 
@@ -66,9 +72,9 @@ pub fn main(init: std.process.Init) !void {
     );
     var state_mutated = false;
     defer if (state_mutated) {
-        std.debug.print("Restoring original side-light state...\n", .{});
+        std.debug.print("Restoring original lighting state...\n", .{});
         device.setLightingStateVerified(0, state) catch |err| {
-            std.debug.print("WARNING: side-light state restoration failed: {t}\n", .{err});
+            std.debug.print("WARNING: lighting state restoration failed: {t}\n", .{err});
         };
     };
 
@@ -80,9 +86,39 @@ pub fn main(init: std.process.Init) !void {
     const static_state = stateWithSideColor(state, .{ .red = 32, .green = 32, .blue = 32 });
     try showZonePattern(&device, "both bars dim white (individual-write baseline)", static_state, hold_ms);
 
+    var custom_state = static_state;
+    custom_state[0] = 21; // Candidate D8 renderer, proven on the Air100 V3.
+    custom_state[4] = 0; // Fixed-color mode.
+    std.debug.print("Enabling hidden custom-color effect 21 before D8 writes.\n", .{});
+    device.setLightingStateVerified(0, custom_state) catch |err| {
+        if (err == error.VerificationFailed) {
+            std.debug.print(
+                "Custom-color effect 21 did not survive D5 readback; no D8 writes were attempted.\n",
+                .{},
+            );
+        }
+        return err;
+    };
+
+    var key_baseline: [1]Color = undefined;
+    try device.readColors(1, &key_baseline);
+    var key_mutated = false;
+    defer if (key_mutated) {
+        std.debug.print("Restoring known key-light index 1...\n", .{});
+        device.setColorsVerified(1, &key_baseline) catch |err| {
+            std.debug.print("WARNING: key-light restoration failed: {t}\n", .{err});
+        };
+    };
+    const key_probe = [_]Color{.{ .red = 255, .green = 0, .blue = 255 }};
+    key_mutated = true;
+    try device.setColorsVerified(1, &key_probe);
+    try device.setColorsVerified(1, &key_baseline);
+    key_mutated = false;
+    std.debug.print("D8 control check at known key-light index 1: PASS\n", .{});
+
     var baseline: [keyboard.side_light_count]Color = undefined;
     try device.readColors(keyboard.side_light_first_index, &baseline);
-    printColors("D2 baseline while the side-light zone is static", &baseline);
+    printColors("D2 side-light baseline under custom-color effect 21", &baseline);
 
     std.debug.print(
         "\nNow testing undocumented D8 per-index writes. The firmware must ACK each write and D2 must report the exact new RGB values.\n",
@@ -104,7 +140,7 @@ pub fn main(init: std.process.Init) !void {
     showIndexedPattern(&device, "indices 84..93 red; 94..103 blue", &pattern, hold_ms) catch |err| {
         if (err == error.VerificationFailed) {
             std.debug.print(
-                "\nUNSUPPORTED: D8 was acknowledged, but D2 did not report the requested side-light colors. Stock Air75 V3 firmware does not expose its 20 side LEDs through the per-index signal-light command.\n",
+                "\nD8 SIDE-LIGHT ROUTE FAILED: the known key-light probe passed, but D2 did not report the requested colors at side-light indices 84..103.\n",
                 .{},
             );
         }
@@ -166,7 +202,7 @@ fn showIndexedPattern(
     std.debug.print("Indexed pattern: {s}\n", .{description});
     try device.setColors(keyboard.side_light_first_index, colors);
     std.debug.print(
-        "Observe the bars now for {d} ms; unsupported firmware will leave both bars dim white.\n",
+        "Observe the bars now for {d} ms.\n",
         .{hold_ms},
     );
     keyboard.sleepMilliseconds(hold_ms);

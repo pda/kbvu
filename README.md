@@ -16,30 +16,26 @@ This project initially targets macOS only and uses Zig. It is experimental:
 before capturing audio, it must establish that host software can safely control
 the side LEDs independently and at a useful refresh rate.
 
-## Result
+## Current result
 
-The stock Air75 V3 firmware does **not** expose the two bars as independently
-writable LEDs. The Zig hardware probe established two distinct behaviors:
+Feasibility is **unresolved**. The probe has established that:
 
-- command `D6` changes and reads back the mode, brightness, and one RGB color
-  for both side bars as a single effects zone; and
-- undocumented command `D8` accepts writes to the 20 side-light indices
-  `84…103`, but `D2` readback remains unchanged. `D8` is an override for the
-  84 key LEDs only.
+- `D1` reports 104 LEDs, matching NuPhyIO's 84 key LEDs plus 20 side LEDs;
+- `D2` reads rendered RGB values for indices `84…103`;
+- `D6` can set both bars together as one effects zone; and
+- undocumented `D8` accepts `[index, red, green, blue]` records.
 
-A five-second manual check confirmed the same result visually: the supported
-`D6` test changed both bars red, green, blue, and dim white, while the attempted
-`D8` red/blue split left both bars dim white.
+The first `D8` side-light test left both bars dim white and produced unchanged
+`D2` readback, but that test used ordinary backlight effect 6. Subsequent
+research found that the closely related Air100 V3 renders its `D8` buffer only
+under hidden effect 21. Therefore the first result does **not** establish that
+the Air75 V3 lacks per-LED host control.
 
-The official NuPhyIO S4 driver likewise leaves its per-light `setCustomLight`
-operation unimplemented for this keyboard. Independent host-driven side LEDs
-would therefore require new Air75 V3 firmware with a streaming HID command.
-Existing streaming and side-light projects require model-specific custom
-firmware and do not support the Air75 V3.
-
-This blocks a stereo ten-segment keyboard VU: the available `D6` control can
-only show one shared value on both bars. Per the feasibility gate above, the
-audio phases have not been started.
+A follow-up attempted to select effect 21 through `D6`, but exact `D5` readback
+verification failed, so the program restored the original state without sending
+another `D8` write. Testing is paused while the keyboard firmware is reviewed or
+updated. See [the protocol research](docs/keyboard-protocol.md) for evidence,
+citations, and the next experiment.
 
 ## Keyboard probe
 
@@ -51,21 +47,23 @@ zig build
 ./zig-out/bin/kbvu-keyboard-demo --hold-ms 1500
 ```
 
-`--probe` is read-only. The full run temporarily shows both bars in red, green,
-blue, and dim white through the supported whole-zone command. It then attempts
-independent red/blue bars, holds that request for `--hold-ms` so it can be
-checked visually, requires exact `D2` readback, reports
-`VerificationFailed` on the stock firmware, and restores the original state.
+`--probe` performs management reads plus the required `EE` session handshake;
+it sends no lighting or persistent-configuration write. The full run temporarily
+shows both bars in red, green, blue, and dim white through the supported
+whole-zone command. It then requires effect 21 to survive exact `D5` readback,
+verifies and restores `D8` first on known key-light index 1, and only then
+attempts independent bar patterns with exact `D2` readback. It restores the
+complete original lighting state on exit or failure.
 
 ## Plan
 
 - [x] Record the project goal and exact connected keyboard model.
 - [x] Collect documentation and open-source references for the Air75 V3 USB/HID protocol and side LEDs.
 - [x] Build and run a minimal Zig program that displays whole-zone test colors and attempts independent patterns.
-- [ ] Establish independent control of the two ten-LED bars. **Blocked by stock firmware.**
-- [ ] Research macOS system-output capture and stereo level measurement. **Not started because keyboard feasibility failed.**
-- [ ] Build and verify a Zig terminal stereo VU meter using test audio. **Not started because keyboard feasibility failed.**
-- [ ] Connect the audio meter to the keyboard LED driver and verify the complete path. **Blocked by stock firmware.**
+- [ ] Establish independent control of the two ten-LED bars. **Pending firmware review/update and an effect-21 retest.**
+- [ ] Research macOS system-output capture and stereo level measurement. **Paused at the keyboard feasibility gate.**
+- [ ] Build and verify a Zig terminal stereo VU meter using test audio. **Paused at the keyboard feasibility gate.**
+- [ ] Connect the audio meter to the keyboard LED driver and verify the complete path.
 
 Each phase is committed separately. Checkboxes are updated as evidence is
 collected and each implementation phase is completed.
