@@ -273,6 +273,38 @@ static OSStatus KBVUHandleCycleHotKey(
         kbvu_menu_tracking_tick(self.tickContext) != 0) {
         [self.statusItem.menu cancelTracking];
     }
+    [self drainPendingHotKeyEvents];
+}
+
+// While the status-item menu is open, the main run loop is in menu-tracking
+// mode and queued Carbon hotkey events are not dispatched until the menu
+// closes, so F13 appears to do nothing until then. This timer runs in
+// NSEventTrackingRunLoopMode, so drain queued hotkey events here and
+// dispatch them to the handler immediately.
+- (void)drainPendingHotKeyEvents {
+    if (self.hotKeyHandler == NULL) {
+        return;
+    }
+    EventTypeSpec spec = {
+        kEventClassKeyboard,
+        kEventHotKeyPressed,
+    };
+    BOOL dispatched = NO;
+    for (;;) {
+        EventRef event = AcquireFirstMatchingEventInQueue(
+            GetMainEventQueue(), 1, &spec, kEventQueueOptionsNone);
+        if (event == NULL) {
+            break;
+        }
+        RemoveEventFromQueue(GetMainEventQueue(), event);
+        SendEventToEventTarget(event, GetApplicationEventTarget());
+        ReleaseEvent(event);
+        dispatched = YES;
+    }
+    if (dispatched) {
+        // Update the "— Current" marker in the open menu.
+        [self refreshOutputDevices];
+    }
 }
 
 - (void)setKeyboardConnected:(BOOL)connected {
