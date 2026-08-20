@@ -43,6 +43,7 @@ const Response = struct {
 
 pub const Keyboard = struct {
     hid_device: hid.Device,
+    pipeline_lagged: bool = false,
 
     pub fn open() !Keyboard {
         return .{
@@ -89,11 +90,17 @@ pub const Keyboard = struct {
 
     pub fn setLightingStateVerified(self: *Keyboard, handle: u8, state: LightingState) !void {
         try self.setLightingState(handle, state);
+        var last_actual: LightingState = undefined;
         for (0..5) |attempt| {
             if (attempt > 0) hid.sleepMilliseconds(120);
             const actual = try self.readLightingState(handle);
             if (std.mem.eql(u8, &actual, &state)) return;
+            last_actual = actual;
         }
+        std.debug.print(
+            "keyboard: lighting state verification mismatch\n  expected: {x}\n  actual:   {x}\n",
+            .{ &state, &last_actual },
+        );
         return error.VerificationFailed;
     }
 
@@ -217,11 +224,35 @@ pub const Keyboard = struct {
         report: *const [report_size]u8,
         requested_command: u8,
     ) ![report_size]u8 {
-        return self.hid_device.sendAndReceive(
-            report,
-            .{ 0xaa, requested_command },
-            1500,
-        );
+        const prefix = [2]u8{ 0xaa, requested_command };
+        const first_wait_ms: u32 = if (self.pipeline_lagged) 40 else 600;
+        if (self.hid_device.sendAndReceive(report, prefix, first_wait_ms)) |response| {
+            return response;
+        } else |err| switch (err) {
+            error.ResponseTimeout => {},
+            else => return err,
+        }
+
+        // The firmware can wedge into a mode where each response is only
+        // transmitted when the next report arrives (observed after a client
+        // was killed mid-transaction; it survives USB re-enumeration). An
+        // intentionally invalid report — bad checksum, so the firmware
+        // executes nothing and queues no response — flushes the pending
+        // response. Extra pokes drain stale responses left by interrupted
+        // sessions; the response prefix filter discards those.
+        var poke: [report_size]u8 = @splat(0);
+        poke[0] = 0x55;
+        poke[3] = 0xa5; // invalid checksum: the correct checksum of this body is 0
+        for (0..3) |_| {
+            if (self.hid_device.sendAndReceive(&poke, prefix, 600)) |response| {
+                self.pipeline_lagged = true;
+                return response;
+            } else |err| switch (err) {
+                error.ResponseTimeout => {},
+                else => return err,
+            }
+        }
+        return error.ResponseTimeout;
     }
 };
 

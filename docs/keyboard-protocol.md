@@ -314,6 +314,78 @@ This isolates the failure to Air75 side rendering rather than a malformed USB
 transaction. The direct connection also rules out the previous hub as the
 cause of the side-write failure.
 
+## Deferred-transmit wedge and flush-poke recovery
+
+The firmware can wedge into a mode where every response is generated and
+queued but only transmitted when the *next* report arrives, so each request
+receives the answer to the previous one. Observed on 2026-08-20 after a
+`kbvu` process was killed mid-transaction; the state survived process
+restarts, fresh `IOHIDManager` sessions, and a USB re-enumeration
+(`USBDeviceReEnumerate`), so only a keyboard power cycle clears it. In this
+mode a strict send-then-wait client can never complete a two-exchange
+transaction: its per-request response filters discard every lagged reply.
+
+Probing established the exact behavior:
+
+- A request sequence `A1 A1 D1 D1` returned (stale) `A1-response`
+  `A1-response` `D1-response` — each reply shifted one slot late.
+- A report with a valid `0x55` magic but an invalid checksum is not executed
+  and queues no response, but still triggers transmission of the pending
+  queued response.
+
+`Keyboard.sendAndReceive` therefore recovers automatically: if a response
+does not arrive in its own window, it sends such an intentionally invalid
+"flush poke" (zero body, `report[3] = 0xa5`) up to three times and accepts
+the first prefix-matching reply. Pokes are harmless to healthy firmware,
+which validates the checksum and ignores them. Once a poke succeeds, the
+`Keyboard` marks the pipeline as lagged and shortens the initial wait so
+rendering stays at full rate.
+
+## Delayed or stuck D6 config writes
+
+The firmware can enter a state where **`D6` config writes appear to be
+ignored**: the write is ACKed and echoed normally, but a `D5` readback
+(100 ms later, and on every later read in the same state) still shows the
+old record. Observed on 2026-08-20 while connected through a Studio
+Display + USB hub chain, with kbvu's side mode 5 persisted by an
+interrupted run: the record read
+`00 32 02 00 00 00 00 05 80 05 3c 02 01 00 ff 00 00` and no repair write
+could visibly change it.
+
+Established by experiment while in this state:
+
+- The `0xEE` session is valid: `D8` per-LED writes apply and verify via
+  `D2` readback (red frame confirmed). So this is not the documented
+  "no valid session → writes ACKed but discarded" behavior.
+- Writing the full 17-byte record (all owned bytes 0/4/9 repaired
+  together) shows no change on readback; nor does sending a `D8` frame
+  first, nor NuPhyIO's post-handshake init reads (`FA FB FB A0`) before
+  the `D6`.
+- Unplug/replug does not clear it. (Whether USB replug actually reboots
+  the MCU in wired mode is unresolved: a `D8` RAM pixel survived one
+  replug, hinting the MCU may stay powered by the battery, but nuphykit
+  documents the `D8` table as RAM-only and an earlier replug did clear the
+  deferred-transmit wedge. Untested.)
+
+However, the writes were **not** discarded: after the keyboard was later
+connected directly via USB-C (no hub), the record was found to contain a
+value written by one of the "failed" writes, and fresh `D6` writes
+verified immediately. So the state is better described as *severely
+delayed application* of `D6` writes — the flash record eventually catches
+up, but far outside any reasonable verification window. The hub path is
+implicated: NuPhyIO's long strict read bursts also fail partway through it
+(partial key-layout rendering), while kbvu's short, poke-tolerant
+transactions survive. nuphykit's protocol research documents no such
+state and no unlock/commit command.
+
+`kbvu` tolerates the state in `Output.start()`: the stock-baseline repair
+and the mode-5 activation write are attempted and verified as usual, but
+if verification fails while the keyboard is already in side mode 5, it
+logs and continues — `D8` rendering works fine in this state, so the VU
+meters operate normally. The repaired stock baseline (bytes 0/4/9 set to
+6/1/4) is kept as the restore target so quit restores stock lighting once
+`D6` writes verify again.
+
 ## Lighting baseline recovery and factory reset
 
 The earliest durable record of the keyboard's pre-`kbvu` lighting configuration

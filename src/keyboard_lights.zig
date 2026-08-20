@@ -18,17 +18,34 @@ pub const Connection = struct {
     active: ?Output = null,
     saved: ?SavedState = null,
     retry_updates: u8 = 0,
+    last_error: ?anyerror = null,
+
+    fn noteFailure(self: *Connection, stage: []const u8, err: anyerror) void {
+        if (self.last_error == null or self.last_error.? != err) {
+            std.debug.print("keyboard: {s} failed ({t}); retrying\n", .{ stage, err });
+        }
+        self.last_error = err;
+        self.retry_updates = retry_delay_updates;
+    }
+
+    fn noteConnected(self: *Connection) Status {
+        if (self.last_error != null) {
+            std.debug.print("keyboard: connected\n", .{});
+            self.last_error = null;
+        }
+        return .connected;
+    }
 
     pub fn render(self: *Connection, reading: meter.MeterReading) Status {
         if (self.active) |*output| {
-            output.render(reading) catch {
+            output.render(reading) catch |err| {
+                self.noteFailure("render", err);
                 self.saved = output.savedState();
                 output.abandon();
                 self.active = null;
-                self.retry_updates = retry_delay_updates;
                 return .waiting;
             };
-            return .connected;
+            return self.noteConnected();
         }
 
         if (self.retry_updates != 0) {
@@ -36,25 +53,25 @@ pub const Connection = struct {
             return .waiting;
         }
 
-        self.active = Output.open() catch {
-            self.retry_updates = retry_delay_updates;
+        self.active = Output.open() catch |err| {
+            self.noteFailure("open", err);
             return .waiting;
         };
         const output = &self.active.?;
-        output.start(self.saved) catch {
+        output.start(self.saved) catch |err| {
+            self.noteFailure("start", err);
             output.abandon();
             self.active = null;
-            self.retry_updates = retry_delay_updates;
             return .waiting;
         };
         self.saved = output.savedState();
-        output.render(reading) catch {
+        output.render(reading) catch |err| {
+            self.noteFailure("first render", err);
             output.abandon();
             self.active = null;
-            self.retry_updates = retry_delay_updates;
             return .waiting;
         };
-        return .connected;
+        return self.noteConnected();
     }
 
     pub fn close(self: *Connection) void {
@@ -83,10 +100,22 @@ pub const Output = struct {
         } else {
             var state = try self.device.readLightingState(0);
             if (state[9] == 5) {
-                // Recover after an interrupted run before establishing this
-                // run's baseline. Mode 4 was the pre-kbvu stock side mode.
+                // A previous run was interrupted before restoring stock
+                // lighting. Repair the three bytes kbvu replaces to the
+                // documented stock values: backlight effect 6, isRGB 1, side
+                // mode 4 (docs/keyboard-protocol.md, lighting baseline).
+                // D6 config writes can be severely delayed and fail
+                // verification (docs/keyboard-protocol.md, "Delayed or stuck
+                // D6 config writes"), so the repair is best-effort; the
+                // repaired record still becomes the restore baseline in case
+                // config writes recover later.
+                state[0] = 6;
+                state[4] = 1;
                 state[9] = 4;
-                try self.device.setLightingStateVerified(0, state);
+                self.device.setLightingStateVerified(0, state) catch |err| switch (err) {
+                    error.VerificationFailed => {},
+                    else => return err,
+                };
             }
             self.original_state = state;
             try self.device.readColors(keyboard.side_light_first_index, &self.original_colors);
@@ -97,7 +126,21 @@ pub const Output = struct {
         custom_state[0] = 21;
         custom_state[4] = 0;
         custom_state[9] = 5;
-        try self.device.setLightingStateVerified(0, custom_state);
+        self.device.setLightingStateVerified(0, custom_state) catch |err| switch (err) {
+            error.VerificationFailed => {
+                // Delayed/stuck D6 config writes: the write did not verify,
+                // but the keyboard is already in the direct-color mode kbvu
+                // needs, and D8 rendering still works. Continue.
+                const current = try self.device.readLightingState(0);
+                if (current[9] != 5) return err;
+                std.debug.print(
+                    "keyboard: config writes ignored by firmware; " ++
+                        "already in direct mode, continuing\n",
+                    .{},
+                );
+            },
+            else => return err,
+        };
     }
 
     pub fn render(self: *Output, reading: meter.MeterReading) !void {
