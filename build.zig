@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-fobjc-arc"},
     });
     vu_module.linkFramework("AppKit", .{});
+    vu_module.linkFramework("Carbon", .{});
     vu_module.linkFramework("CoreAudio", .{});
     vu_module.linkFramework("CoreFoundation", .{});
     vu_module.linkFramework("Foundation", .{});

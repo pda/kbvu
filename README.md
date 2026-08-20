@@ -63,11 +63,20 @@ open zig-out/kbvu.app
 
 Opening the app with no arguments starts system-audio capture and keyboard
 output. The waveform item in the macOS menu bar shows that Keyboard VU is
-running. Its **Start at Login** item toggles the native macOS Login Item and
-shows a checkmark when enabled. A dash means macOS requires approval; selecting
-the item then opens the relevant System Settings pane. Choose **Quit Keyboard
-VU** to stop it and restore the keyboard's complete pre-run lighting state. The
-app has no Dock icon and emits no terminal output.
+running. Under **Cycle Audio Outputs (F13)**, check each output device that
+should participate in the cycle, then remap the knob button from Mute to F13 in
+the keyboard's remapping tool. Each press switches to the next checked device
+that is currently connected. Device choices use Core Audio's persistent device
+IDs, so a checked USB output remains selected after it disconnects and
+reconnects. The current output is labelled in the menu; if zero available
+devices are checked, or the sole checked device is already current, F13 does
+nothing.
+
+The **Start at Login** item toggles the native macOS Login Item and shows a
+checkmark when enabled. A dash means macOS requires approval; selecting the item
+then opens the relevant System Settings pane. Choose **Quit Keyboard VU** to
+stop it and restore the keyboard's complete pre-run lighting state. The app has
+no Dock icon and emits no terminal output.
 
 The app can start without the keyboard. While the Air75 is absent, its menu
 shows a disconnected warning and retries silently once per second. Unplugging

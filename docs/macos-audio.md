@@ -94,10 +94,12 @@ TCC client. Development can use one ad-hoc-signed final build, but changing its
 contents may require granting it again; a persistent Apple Development signature
 is the reliable long-term option.
 
-No microphone entitlement, audio driver, Audio MIDI Setup aggregate, or change
-to the user's default output device is part of this design. If permission is
-denied, the program must explain how to enable System Settings → Privacy &
-Security → System Audio Recording Only and exit without touching the keyboard.
+No microphone entitlement, audio driver, or persistent Audio MIDI Setup
+aggregate is part of this design. The menu-bar app changes the default output
+device only when its F13 cycle shortcut is pressed and at least one selected
+device is available. If capture permission is denied, the program must explain
+how to enable System Settings → Privacy & Security → System Audio Recording
+Only and exit without touching the keyboard.
 
 ## Stereo level calculation
 
@@ -159,11 +161,14 @@ for automated checks.
   non-real-time loop also performs D8 writes; the Core Audio callback never
   touches HID.
 - `src/menu_bar.m` owns the AppKit status item, Quit action, nonblocking event
-  pump, and startup-error alerts. While its menu is open, a timer scheduled in
-  AppKit's event-tracking run-loop mode invokes the same Zig meter/keyboard
-  update at 20 Hz; HID therefore remains single-threaded and does not pause for
-  menu interaction. The menu's keyboard-status item changes between connected
-  and disconnected/waiting without presenting a modal error. Opening the bundle
+  pump, and startup-error alerts. It also lists current Core Audio output
+  devices, persists the checked subset by device UID, and registers F13 as a
+  global shortcut that advances the default output to the next checked,
+  connected device. While its menu is open, a timer scheduled in AppKit's
+  event-tracking run-loop mode invokes the same Zig meter/keyboard update at 20
+  Hz; HID therefore remains single-threaded and does not pause for menu
+  interaction. The menu's keyboard-status item changes between connected and
+  disconnected/waiting without presenting a modal error. Opening the bundle
   with no arguments enables this UI and keyboard output by default.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
