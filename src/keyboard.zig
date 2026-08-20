@@ -1,17 +1,29 @@
 const std = @import("std");
 const hid = @import("hid.zig");
 
+pub const vendor_id: u16 = 0x19f5;
+pub const product_id: u16 = 0x1028;
 pub const report_size = hid.report_size;
 pub const maximum_payload_size = 56;
 pub const side_light_first_index: u8 = 84;
 pub const side_light_count = 20;
+const reply_latency_capacity = 256;
+
+pub const ReplyLatencyStats = struct {
+    sample_count: u16 = 0,
+    average_ms: f64 = 0,
+    median_ms: f64 = 0,
+    p99_ms: f64 = 0,
+};
+
+pub fn trafficTotals() hid.Traffic {
+    return hid.trafficTotals();
+}
 
 pub fn sleepMilliseconds(milliseconds: u32) void {
     hid.sleepMilliseconds(milliseconds);
 }
 
-const vendor_id: i32 = 0x19f5;
-const product_id: i32 = 0x1028;
 const usage_page: i32 = 1;
 const usage: i32 = 0;
 
@@ -44,6 +56,9 @@ const Response = struct {
 pub const Keyboard = struct {
     hid_device: hid.Device,
     pipeline_lagged: bool = false,
+    reply_latency_ticks: [reply_latency_capacity]u64 = @splat(0),
+    reply_latency_count: u16 = 0,
+    next_reply_latency: usize = 0,
 
     pub fn open() !Keyboard {
         return .{
@@ -62,6 +77,26 @@ pub const Keyboard = struct {
 
     pub fn close(self: *Keyboard) void {
         self.hid_device.close();
+    }
+
+    pub fn usbLinkSpeedBitsPerSecond(self: *const Keyboard) ?u64 {
+        return self.hid_device.usb_link_speed_bps;
+    }
+
+    pub fn replyLatencyStats(self: *const Keyboard) ReplyLatencyStats {
+        const count: usize = self.reply_latency_count;
+        if (count == 0) return .{};
+
+        var sorted = self.reply_latency_ticks;
+        std.mem.sort(u64, sorted[0..count], {}, std.sort.asc(u64));
+        var timebase: std.c.mach_timebase_info_data = undefined;
+        if (std.c.mach_timebase_info(&timebase) != 0 or timebase.denom == 0) {
+            return .{ .sample_count = self.reply_latency_count };
+        }
+        const milliseconds_per_tick =
+            @as(f64, @floatFromInt(timebase.numer)) /
+            (@as(f64, @floatFromInt(timebase.denom)) * 1_000_000.0);
+        return summarizeReplyLatencies(sorted[0..count], milliseconds_per_tick);
     }
 
     pub fn firmwareInfo(self: *Keyboard) ![8]u8 {
@@ -224,9 +259,11 @@ pub const Keyboard = struct {
         report: *const [report_size]u8,
         requested_command: u8,
     ) ![report_size]u8 {
+        const started = std.c.mach_absolute_time();
         const prefix = [2]u8{ 0xaa, requested_command };
         const first_wait_ms: u32 = if (self.pipeline_lagged) 40 else 600;
         if (self.hid_device.sendAndReceive(report, prefix, first_wait_ms)) |response| {
+            self.recordReplyLatency(started);
             return response;
         } else |err| switch (err) {
             error.ResponseTimeout => {},
@@ -246,6 +283,7 @@ pub const Keyboard = struct {
         for (0..3) |_| {
             if (self.hid_device.sendAndReceive(&poke, prefix, 600)) |response| {
                 self.pipeline_lagged = true;
+                self.recordReplyLatency(started);
                 return response;
             } else |err| switch (err) {
                 error.ResponseTimeout => {},
@@ -254,7 +292,41 @@ pub const Keyboard = struct {
         }
         return error.ResponseTimeout;
     }
+
+    fn recordReplyLatency(self: *Keyboard, started: u64) void {
+        self.reply_latency_ticks[self.next_reply_latency] =
+            std.c.mach_absolute_time() - started;
+        self.next_reply_latency = (self.next_reply_latency + 1) % reply_latency_capacity;
+        if (self.reply_latency_count < reply_latency_capacity) {
+            self.reply_latency_count += 1;
+        }
+    }
 };
+
+fn summarizeReplyLatencies(
+    sorted_ticks: []const u64,
+    milliseconds_per_tick: f64,
+) ReplyLatencyStats {
+    std.debug.assert(sorted_ticks.len > 0);
+    var total_ticks: f64 = 0;
+    for (sorted_ticks) |ticks| total_ticks += @floatFromInt(ticks);
+
+    const middle = sorted_ticks.len / 2;
+    const median_ticks = if (sorted_ticks.len % 2 == 0)
+        (@as(f64, @floatFromInt(sorted_ticks[middle - 1])) +
+            @as(f64, @floatFromInt(sorted_ticks[middle]))) / 2.0
+    else
+        @as(f64, @floatFromInt(sorted_ticks[middle]));
+    const p99_index = (@as(usize, 99) * sorted_ticks.len + 99) / 100 - 1;
+    return .{
+        .sample_count = @intCast(sorted_ticks.len),
+        .average_ms = total_ticks / @as(f64, @floatFromInt(sorted_ticks.len)) *
+            milliseconds_per_tick,
+        .median_ms = median_ticks * milliseconds_per_tick,
+        .p99_ms = @as(f64, @floatFromInt(sorted_ticks[p99_index])) *
+            milliseconds_per_tick,
+    };
+}
 
 fn makeRequest(
     requested_command: u8,
@@ -314,6 +386,16 @@ fn checksum(report: *const [report_size]u8) u8 {
     var sum: u8 = 0;
     for (report[4..]) |byte| sum +%= byte;
     return sum;
+}
+
+test "reply latency summary reports average median and p99" {
+    const sorted_ticks = [_]u64{ 1_000, 2_000, 3_000, 4_000 };
+    const stats = summarizeReplyLatencies(&sorted_ticks, 0.001);
+
+    try std.testing.expectEqual(@as(u16, 4), stats.sample_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), stats.average_ms, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), stats.median_ms, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f64, 4), stats.p99_ms, 0.0001);
 }
 
 test "request encrypts route and payload then checksums bytes four through sixty-three" {

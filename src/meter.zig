@@ -2,7 +2,8 @@ const std = @import("std");
 
 pub const bar_cell_count = 10;
 pub const minimum_dbfs: f64 = -50.0;
-pub const display_interval_seconds: f64 = 0.05;
+pub const display_rate_hz: u8 = 30;
+pub const display_interval_seconds: f64 = 1.0 / @as(f64, display_rate_hz);
 
 const queue_capacity = 256;
 const default_sample_rate_hz: f64 = 48_000.0;
@@ -432,7 +433,8 @@ test "meter attacks immediately and decays by elapsed time" {
 
     feedTestAudio(&queue, 1);
     const levels = meter.update(&queue, display_interval_seconds);
-    try std.testing.expectApproxEqAbs(-11.0, levels.left_dbfs, 0.001);
+    const expected_decay = -6.0 - Meter.decay_db_per_second * display_interval_seconds;
+    try std.testing.expectApproxEqAbs(expected_decay, levels.left_dbfs, 0.001);
     try std.testing.expectApproxEqAbs(-6.0, levels.right_dbfs, 0.001);
 }
 

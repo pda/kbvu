@@ -152,24 +152,28 @@ for automated checks.
   and plain/ANSI renderers.
 - `src/keyboard_lights.zig` maps those same stereo lengths and shared bass colour
   onto side indices `84…103` in reverse index order so each bar grows upward,
-  selects private renderer mode 5, and restores the saved RGB table and lighting
-  state on exit. Its connection state retains that baseline across USB removal,
-  retries a missing keyboard once per second, and resumes output when the Air75
-  reappears.
-- `src/vu_meter.zig` owns argument parsing, the 20 Hz display loop, signal
-  cleanup, and the opt-in plain/ANSI output selection. With `--keyboard`, this
-  non-real-time loop also performs D8 writes; the Core Audio callback never
-  touches HID.
+  sends only changed frames, selects private renderer mode 5, and restores the
+  saved RGB table and lighting state on exit. Its connection state retains that
+  baseline across USB removal, retries a missing keyboard once per second, and
+  resumes output when the Air75 reappears.
+- `src/vu_meter.zig` owns argument parsing, the deadline-scheduled 30 Hz display
+  loop, signal cleanup, and the opt-in plain/ANSI output selection. With
+  `--keyboard`, this non-real-time loop also performs D8 writes; the Core Audio
+  callback never touches HID.
 - `src/menu_bar.m` owns the AppKit status item, Quit action, nonblocking event
   pump, and startup-error alerts. It also lists current Core Audio output
   devices, persists the checked subset by device UID, and registers F13 as a
   global shortcut that advances the default output to the next checked,
   connected device. While its menu is open, a timer scheduled in AppKit's
-  event-tracking run-loop mode invokes the same Zig meter/keyboard update at 20
-  Hz; HID therefore remains single-threaded and does not pause for menu
-  interaction. The menu's keyboard-status item changes between connected and
-  disconnected/waiting without presenting a modal error. Opening the bundle
-  with no arguments enables this UI and keyboard output by default.
+  event-tracking run-loop mode invokes the same Zig meter/keyboard update at 30
+  Hz and redraws a custom horizontal stereo VU view; HID therefore remains
+  single-threaded and does not pause for menu interaction. Option-clicking the
+  status item also exposes USB connection details, process-local HID report and
+  reply-latency statistics, effective frame rate, HID busy percentage, and
+  frame suppression totals in a compact view. The menu's keyboard-status item
+  changes between connected and disconnected/waiting without presenting a
+  modal error. Opening the bundle with no arguments enables this UI and
+  keyboard output by default.
 - `resources/Info.plist` and `tools/run_vu.sh` provide the signed app identity
   and LaunchServices/TTY bridge required by TCC.
 
