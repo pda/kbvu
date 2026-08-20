@@ -148,7 +148,7 @@ for automated checks.
 - `src/audio_capture.m` owns the private unmuted tap, tap-only aggregate,
   Float32 layout checks, sample-rate handoff, IOProc, and reverse-order cleanup.
 - `src/meter.zig` owns the fixed lock-free queue, independent stereo RMS,
-  low-frequency energy analysis, 30 dB/s decay, ten-cell mapping, test source,
+  low-frequency energy analysis, 100 dB/s decay, ten-cell mapping, test source,
   and plain/ANSI renderers.
 - `src/keyboard_lights.zig` maps those same stereo lengths and shared bass colour
   onto side indices `84…103` in reverse index order so each bar grows upward,

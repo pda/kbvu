@@ -133,7 +133,7 @@ pub const Meter = struct {
     displayed_bass_db: f64 = minimum_bass_db,
     has_bass_measurement: bool = false,
 
-    const decay_db_per_second = 30.0;
+    const decay_db_per_second = 100.0;
     const bass_smoothing_seconds = 0.15;
 
     pub fn update(self: *Meter, queue: *SampleQueue, elapsed_seconds: f64) MeterReading {
@@ -431,7 +431,7 @@ test "meter attacks immediately and decays by elapsed time" {
 
     feedTestAudio(&queue, 1);
     const levels = meter.update(&queue, display_interval_seconds);
-    try std.testing.expectApproxEqAbs(-7.5, levels.left_dbfs, 0.001);
+    try std.testing.expectApproxEqAbs(-11.0, levels.left_dbfs, 0.001);
     try std.testing.expectApproxEqAbs(-6.0, levels.right_dbfs, 0.001);
 }
 
