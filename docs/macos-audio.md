@@ -129,7 +129,7 @@ also accumulates its sum of squares. For combined left/right low-pass energy
 The filter coefficient is calculated from the actual Core Audio tap sample
 rate. This adds fixed state and arithmetic but no allocation, locking, FFT, or
 other real-time-unsafe work to the callback. Both bars share one smoothed value:
-at or below −20 dB it is cyan, at −10 dB it is yellow, and at or above −4 dB it
+at or below −20 dB it is cyan, at −10 dB it is yellow, and at or above −3 dB it
 is red, with 24-bit RGB interpolation between those points. Audio at or below
 the −50 dBFS display floor moves the colour toward cyan instead of allowing
 noise to choose it. Only filled cells are coloured; dim empty cells still show

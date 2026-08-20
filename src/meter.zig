@@ -134,7 +134,7 @@ pub const Meter = struct {
     has_bass_measurement: bool = false,
 
     const decay_db_per_second = 100.0;
-    const bass_smoothing_seconds = 0.15;
+    const bass_smoothing_seconds = 0.05;
 
     pub fn update(self: *Meter, queue: *SampleQueue, elapsed_seconds: f64) MeterReading {
         var sums = BlockLevels{
@@ -301,7 +301,7 @@ pub fn colorForBass(bass_db: f64) Rgb {
     const red = Rgb{ .red = 255, .green = 0, .blue = 0 };
     if (bass_db <= -20.0) return cyan;
     if (bass_db < -10.0) return interpolateColor(cyan, yellow, (bass_db + 20.0) / 10.0);
-    if (bass_db < -4.0) return interpolateColor(yellow, red, (bass_db + 10.0) / 6.0);
+    if (bass_db < -3.0) return interpolateColor(yellow, red, (bass_db + 10.0) / 7.0);
     return red;
 }
 
@@ -421,6 +421,7 @@ test "bass color falls toward neutral when audio stops" {
 
     try std.testing.expect(silent.bass_db < playing.bass_db);
     try std.testing.expect(silent.bass_db > minimum_bass_db);
+    try std.testing.expectEqual(Rgb{ .red = 51, .green = 199, .blue = 255 }, colorForBass(silent.bass_db));
 }
 
 test "meter attacks immediately and decays by elapsed time" {
@@ -449,7 +450,8 @@ test "bass color runs from cyan through yellow to red" {
     try std.testing.expectEqual(Rgb{ .red = 51, .green = 199, .blue = 255 }, colorForBass(-20));
     try std.testing.expectEqual(Rgb{ .red = 153, .green = 205, .blue = 159 }, colorForBass(-15));
     try std.testing.expectEqual(Rgb{ .red = 255, .green = 210, .blue = 63 }, colorForBass(-10));
-    try std.testing.expectEqual(Rgb{ .red = 255, .green = 0, .blue = 0 }, colorForBass(-4));
+    try std.testing.expectEqual(Rgb{ .red = 255, .green = 30, .blue = 9 }, colorForBass(-4));
+    try std.testing.expectEqual(Rgb{ .red = 255, .green = 0, .blue = 0 }, colorForBass(-3));
 }
 
 test "plain renderer is deterministic and contains ten cells per channel" {
