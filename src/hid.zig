@@ -19,6 +19,7 @@ const c = struct {
     pub const IOHIDManagerRef = *IOHIDManager;
     pub const IOHIDDevice = opaque {};
     pub const IOHIDDeviceRef = *IOHIDDevice;
+    pub const io_service_t = c_uint;
     pub const IOReturn = i32;
     pub const IOHIDReportType = c_uint;
     pub const IOHIDReportCallback = *const fn (
@@ -33,9 +34,12 @@ const c = struct {
 
     pub const kCFStringEncodingUTF8: u32 = 0x08000100;
     pub const kCFNumberIntType: c_uint = 9;
+    pub const kCFNumberLongLongType: c_uint = 11;
     pub const kIOHIDOptionsTypeNone: u32 = 0;
     pub const kIOHIDReportTypeOutput: IOHIDReportType = 1;
     pub const kIOReturnSuccess: IOReturn = 0;
+    pub const kIORegistryIterateRecursively: u32 = 1;
+    pub const kIORegistryIterateParents: u32 = 2;
 
     pub extern const kCFAllocatorDefault: CFAllocatorRef;
     pub extern const kCFRunLoopDefaultMode: CFStringRef;
@@ -105,6 +109,7 @@ const c = struct {
         device: IOHIDDeviceRef,
         key: CFStringRef,
     ) ?*const anyopaque;
+    pub extern fn IOHIDDeviceGetService(device: IOHIDDeviceRef) io_service_t;
     pub extern fn IOHIDDeviceRegisterInputReportCallback(
         device: IOHIDDeviceRef,
         report: [*]u8,
@@ -119,12 +124,32 @@ const c = struct {
         report: [*]const u8,
         report_length: CFIndex,
     ) IOReturn;
+    pub extern fn IORegistryEntrySearchCFProperty(
+        entry: io_service_t,
+        plane: [*:0]const u8,
+        key: CFStringRef,
+        allocator: CFAllocatorRef,
+        options: u32,
+    ) ?*const anyopaque;
 
     pub extern fn arc4random_buf(buffer: *anyopaque, length: usize) void;
     pub extern fn usleep(microseconds: c_uint) c_int;
 };
 
 pub const report_size = 64;
+
+pub const Traffic = struct {
+    output_reports: u64 = 0,
+    input_reports: u64 = 0,
+    busy_nanoseconds: u64 = 0,
+};
+
+var traffic = Traffic{};
+var mach_timebase = std.c.mach_timebase_info_data{ .numer = 0, .denom = 0 };
+
+pub fn trafficTotals() Traffic {
+    return traffic;
+}
 
 pub const Match = struct {
     vendor_id: i32,
@@ -137,6 +162,7 @@ pub const Device = struct {
     manager: c.IOHIDManagerRef,
     devices: c.CFSetRef,
     device: c.IOHIDDeviceRef,
+    usb_link_speed_bps: ?u64,
     input_buffer: [report_size]u8 = @splat(0),
     response: ?[report_size]u8 = null,
     expected_prefix: ?[2]u8 = null,
@@ -186,6 +212,7 @@ pub const Device = struct {
             .manager = manager,
             .devices = devices,
             .device = device,
+            .usb_link_speed_bps = getParentIntegerProperty(device, "UsbLinkSpeed"),
         };
     }
 
@@ -226,6 +253,8 @@ pub const Device = struct {
         expected_prefix: ?[2]u8,
         timeout_ms: u32,
     ) ![report_size]u8 {
+        const started = std.c.mach_absolute_time();
+        defer traffic.busy_nanoseconds += elapsedNanoseconds(started);
         self.response = null;
         self.expected_prefix = expected_prefix;
         const result = c.IOHIDDeviceSetReport(
@@ -236,6 +265,7 @@ pub const Device = struct {
             report_size,
         );
         if (result != c.kIOReturnSuccess) return error.WriteFailed;
+        traffic.output_reports += 1;
 
         const attempts = @max(1, (timeout_ms + 19) / 20);
         for (0..attempts) |_| {
@@ -254,6 +284,20 @@ pub fn sleepMilliseconds(milliseconds: u32) void {
     _ = c.usleep(milliseconds * 1000);
 }
 
+fn elapsedNanoseconds(started: u64) u64 {
+    if (mach_timebase.denom == 0) {
+        if (std.c.mach_timebase_info(&mach_timebase) != 0 or
+            mach_timebase.denom == 0)
+        {
+            return 0;
+        }
+    }
+    const ticks = std.c.mach_absolute_time() - started;
+    return @intCast(
+        (@as(u128, ticks) * mach_timebase.numer) / mach_timebase.denom,
+    );
+}
+
 fn inputReportCallback(
     context: ?*anyopaque,
     result: c.IOReturn,
@@ -267,6 +311,7 @@ fn inputReportCallback(
     _ = report_type;
     _ = report_id;
     if (result != c.kIOReturnSuccess or context == null or report_length != report_size) return;
+    traffic.input_reports += 1;
     const self: *Device = @ptrCast(@alignCast(context.?));
     if (self.expected_prefix) |prefix| {
         if (report[0] != prefix[0] or report[1] != prefix[1]) return;
@@ -322,4 +367,29 @@ fn getIntegerProperty(device: c.IOHIDDeviceRef, name: [*:0]const u8) ?i32 {
     var value: i32 = 0;
     if (c.CFNumberGetValue(@ptrCast(property), c.kCFNumberIntType, &value) == 0) return null;
     return value;
+}
+
+fn getParentIntegerProperty(device: c.IOHIDDeviceRef, name: [*:0]const u8) ?u64 {
+    const service = c.IOHIDDeviceGetService(device);
+    if (service == 0) return null;
+    const key = c.CFStringCreateWithCString(
+        c.kCFAllocatorDefault,
+        name,
+        c.kCFStringEncodingUTF8,
+    ) orelse return null;
+    defer c.CFRelease(key);
+    const property = c.IORegistryEntrySearchCFProperty(
+        service,
+        "IOService",
+        key,
+        c.kCFAllocatorDefault,
+        c.kIORegistryIterateRecursively | c.kIORegistryIterateParents,
+    ) orelse return null;
+    defer c.CFRelease(property);
+    if (c.CFGetTypeID(property) != c.CFNumberGetTypeID()) return null;
+    var value: i64 = 0;
+    if (c.CFNumberGetValue(@ptrCast(property), c.kCFNumberLongLongType, &value) == 0 or value < 0) {
+        return null;
+    }
+    return @intCast(value);
 }

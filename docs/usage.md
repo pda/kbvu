@@ -22,14 +22,19 @@ open zig-out/kbvu.app
 
 Opening the app with no arguments starts system-audio capture and keyboard
 output. The waveform item in the macOS menu bar shows that Keyboard VU is
-running. Under **Cycle Audio Outputs (F13)**, check each output device that
-should participate in the cycle, then remap the knob button from Mute to F13 in
-the keyboard's remapping tool. Each press switches to the next checked device
-that is currently connected. Device choices use Core Audio's persistent device
-IDs, so a checked USB output remains selected after it disconnects and
-reconnects. The current output is labelled in the menu; if zero available
-devices are checked, or the sole checked device is already current, F13 does
-nothing.
+running. Its menu shows the same live stereo lengths and bass colour as a
+horizontal, single-row VU meter. Option-click the waveform to additionally show
+the USB VID/PID, negotiated link speed, HID report size, live report rates,
+aggregate throughput, reply-latency distribution, effective frame rate, HID
+busy percentage, and sent/skipped frame totals.
+
+Under **Cycle Audio Outputs (F13)**, check each output device that should
+participate in the cycle, then remap the knob button from Mute to F13 in the
+keyboard's remapping tool. Each press switches to the next checked device that
+is currently connected. Device choices use Core Audio's persistent device IDs,
+so a checked USB output remains selected after it disconnects and reconnects.
+The current output has a trailing **Current** badge; if zero available devices
+are checked, or the sole checked device is already current, F13 does nothing.
 
 The **Start at Login** item toggles the native macOS Login Item and shows a
 checkmark when enabled. A dash means macOS requires approval; selecting the item
@@ -94,8 +99,10 @@ An ad-hoc signature is used when no Apple Development identity is available, so
 a changed rebuild may need permission to be granted again.
 
 The filled LEDs use the same bass colour shown in the ANSI meter; unfilled LEDs
-remain dark, and each bar fills upward from the physical bottom. Ctrl-C and
-finite `--frames` runs restore the complete pre-run side-light state.
+remain dark, and each bar fills upward from the physical bottom. Keyboard frames
+are sent only when their pixels change, so after the final black frame silence
+produces no management HID traffic. Ctrl-C and finite `--frames` runs restore
+the complete pre-run side-light state.
 
 ## Keyboard probe
 

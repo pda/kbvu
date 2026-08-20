@@ -2,11 +2,32 @@ const std = @import("std");
 const keyboard = @import("keyboard.zig");
 const meter = @import("meter.zig");
 
-const retry_delay_updates = 20;
+const retry_delay_updates = meter.display_rate_hz;
 
 pub const Status = enum {
     waiting,
     connected,
+};
+
+pub const Stats = struct {
+    frames_sent: u64 = 0,
+    frames_suppressed: u64 = 0,
+    output_reports: u64 = 0,
+    input_reports: u64 = 0,
+    hid_busy_nanoseconds: u64 = 0,
+    usb_link_speed_bps: u64 = 0,
+    reply_latency_samples: u16 = 0,
+    reply_latency_average_ms: f64 = 0,
+    reply_latency_median_ms: f64 = 0,
+    reply_latency_p99_ms: f64 = 0,
+    usb_vendor_id: u16 = keyboard.vendor_id,
+    usb_product_id: u16 = keyboard.product_id,
+    hid_report_size: u8 = keyboard.report_size,
+};
+
+const RenderResult = enum {
+    sent,
+    suppressed,
 };
 
 const SavedState = struct {
@@ -19,6 +40,8 @@ pub const Connection = struct {
     saved: ?SavedState = null,
     retry_updates: u8 = 0,
     last_error: ?anyerror = null,
+    frames_sent: u64 = 0,
+    frames_suppressed: u64 = 0,
 
     fn noteFailure(self: *Connection, stage: []const u8, err: anyerror) void {
         if (self.last_error == null or self.last_error.? != err) {
@@ -36,15 +59,23 @@ pub const Connection = struct {
         return .connected;
     }
 
+    fn recordRender(self: *Connection, result: RenderResult) void {
+        switch (result) {
+            .sent => self.frames_sent += 1,
+            .suppressed => self.frames_suppressed += 1,
+        }
+    }
+
     pub fn render(self: *Connection, reading: meter.MeterReading) Status {
         if (self.active) |*output| {
-            output.render(reading) catch |err| {
+            const result = output.render(reading) catch |err| {
                 self.noteFailure("render", err);
                 self.saved = output.savedState();
                 output.abandon();
                 self.active = null;
                 return .waiting;
             };
+            self.recordRender(result);
             return self.noteConnected();
         }
 
@@ -65,13 +96,37 @@ pub const Connection = struct {
             return .waiting;
         };
         self.saved = output.savedState();
-        output.render(reading) catch |err| {
+        const result = output.render(reading) catch |err| {
             self.noteFailure("first render", err);
             output.abandon();
             self.active = null;
             return .waiting;
         };
+        self.recordRender(result);
         return self.noteConnected();
+    }
+
+    pub fn stats(self: *const Connection) Stats {
+        const traffic = keyboard.trafficTotals();
+        const latency = if (self.active) |*output|
+            output.device.replyLatencyStats()
+        else
+            keyboard.ReplyLatencyStats{};
+        return .{
+            .frames_sent = self.frames_sent,
+            .frames_suppressed = self.frames_suppressed,
+            .output_reports = traffic.output_reports,
+            .input_reports = traffic.input_reports,
+            .hid_busy_nanoseconds = traffic.busy_nanoseconds,
+            .usb_link_speed_bps = if (self.active) |*output|
+                output.device.usbLinkSpeedBitsPerSecond() orelse 0
+            else
+                0,
+            .reply_latency_samples = latency.sample_count,
+            .reply_latency_average_ms = latency.average_ms,
+            .reply_latency_median_ms = latency.median_ms,
+            .reply_latency_p99_ms = latency.p99_ms,
+        };
     }
 
     pub fn close(self: *Connection) void {
@@ -84,6 +139,7 @@ pub const Output = struct {
     device: keyboard.Keyboard,
     original_state: keyboard.LightingState = undefined,
     original_colors: [keyboard.side_light_count]keyboard.Color = undefined,
+    last_colors: ?[keyboard.side_light_count]keyboard.Color = null,
     restore_needed: bool = false,
 
     pub fn open() !Output {
@@ -143,9 +199,14 @@ pub const Output = struct {
         };
     }
 
-    pub fn render(self: *Output, reading: meter.MeterReading) !void {
+    fn render(self: *Output, reading: meter.MeterReading) !RenderResult {
         const colors = colorsForReading(reading);
+        if (self.last_colors) |last_colors| {
+            if (std.meta.eql(last_colors, colors)) return .suppressed;
+        }
         try self.device.setColors(keyboard.side_light_first_index, &colors);
+        self.last_colors = colors;
+        return .sent;
     }
 
     fn savedState(self: *const Output) SavedState {
@@ -216,4 +277,15 @@ test "silence leaves both bars dark" {
         .bass_db = -3,
     });
     for (colors) |color| try std.testing.expectEqual(keyboard.Color.black, color);
+}
+
+test "render stats distinguish transmitted and duplicate frames" {
+    var connection = Connection{};
+    connection.recordRender(.sent);
+    connection.recordRender(.suppressed);
+    connection.recordRender(.suppressed);
+
+    const stats = connection.stats();
+    try std.testing.expectEqual(@as(u64, 1), stats.frames_sent);
+    try std.testing.expectEqual(@as(u64, 2), stats.frames_suppressed);
 }

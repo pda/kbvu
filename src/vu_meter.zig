@@ -4,6 +4,31 @@ const meter = @import("meter.zig");
 
 const Capture = opaque {};
 
+const MenuSnapshot = extern struct {
+    frames_sent: u64,
+    frames_suppressed: u64,
+    output_reports: u64,
+    input_reports: u64,
+    hid_busy_nanoseconds: u64,
+    usb_link_speed_bps: u64,
+    reply_latency_average_ms: f64,
+    reply_latency_median_ms: f64,
+    reply_latency_p99_ms: f64,
+    reply_latency_samples: u16,
+    usb_vendor_id: u16,
+    usb_product_id: u16,
+    hid_report_size: u8,
+    left_segments: u8,
+    right_segments: u8,
+    red: u8,
+    green: u8,
+    blue: u8,
+};
+
+comptime {
+    if (@sizeOf(MenuSnapshot) != 88) @compileError("unexpected menu snapshot layout");
+}
+
 extern fn kbvu_capture_start(
     context: *anyopaque,
     out_capture: *?*Capture,
@@ -165,6 +190,17 @@ pub fn main(init: std.process.Init) !void {
     if (options.menubar) kbvu_menubar_set_tick_context(&menu_tracking_context);
     defer if (options.menubar) kbvu_menubar_set_tick_context(null);
 
+    const frame_interval: std.Io.Clock.Duration = .{
+        .raw = .fromNanoseconds(
+            @intFromFloat(meter.display_interval_seconds * std.time.ns_per_s),
+        ),
+        .clock = .awake,
+    };
+    var next_frame = std.Io.Clock.Timestamp.now(init.io, .awake);
+    if (options.source == .system) {
+        next_frame = next_frame.addDuration(frame_interval);
+    }
+
     var frame_index: usize = 0;
     while (keep_running.load(.monotonic) and
         (options.frame_count == null or frame_index < options.frame_count.?))
@@ -173,14 +209,15 @@ pub fn main(init: std.process.Init) !void {
             kbvu_menubar_pump();
             if (!keep_running.load(.monotonic)) break;
         }
+        try next_frame.wait(init.io);
+        const frame_started = std.Io.Clock.Timestamp.now(init.io, .awake);
+        next_frame = next_frame.addDuration(frame_interval);
+        if (next_frame.compare(.lt, frame_started)) {
+            next_frame = frame_started.addDuration(frame_interval);
+        }
+
         if (options.source == .test_audio) {
             meter.feedTestAudio(&queue, frame_index);
-        } else {
-            try std.Io.sleep(
-                init.io,
-                .fromMilliseconds(@intFromFloat(meter.display_interval_seconds * 1000.0)),
-                .awake,
-            );
         }
 
         const current = levels.update(&queue, meter.display_interval_seconds);
@@ -192,16 +229,6 @@ pub fn main(init: std.process.Init) !void {
         }
         if (options.output != .none) try stdout.flush();
         frame_index += 1;
-
-        if (options.source == .test_audio and keep_running.load(.monotonic) and
-            (options.frame_count == null or frame_index < options.frame_count.?))
-        {
-            try std.Io.sleep(
-                init.io,
-                .fromMilliseconds(@intFromFloat(meter.display_interval_seconds * 1000.0)),
-                .awake,
-            );
-        }
     }
 
     const dropped = queue.dropped_blocks.load(.monotonic);
@@ -259,7 +286,14 @@ export fn kbvu_request_stop() callconv(.c) void {
     keep_running.store(false, .monotonic);
 }
 
-export fn kbvu_menu_tracking_tick(raw_context: *anyopaque) callconv(.c) c_int {
+export fn kbvu_display_interval_seconds() callconv(.c) f64 {
+    return meter.display_interval_seconds;
+}
+
+export fn kbvu_menu_tracking_tick(
+    raw_context: *anyopaque,
+    snapshot: *MenuSnapshot,
+) callconv(.c) c_int {
     if (!keep_running.load(.monotonic)) return 1;
     const context: *MenuTrackingContext = @ptrCast(@alignCast(raw_context));
     const current = context.levels.update(
@@ -267,6 +301,31 @@ export fn kbvu_menu_tracking_tick(raw_context: *anyopaque) callconv(.c) c_int {
         meter.display_interval_seconds,
     );
     context.renderKeyboard(current);
+    const color = meter.colorForBass(current.bass_db);
+    const stats = if (context.lights.*) |*connection|
+        connection.stats()
+    else
+        keyboard_lights.Stats{};
+    snapshot.* = .{
+        .frames_sent = stats.frames_sent,
+        .frames_suppressed = stats.frames_suppressed,
+        .output_reports = stats.output_reports,
+        .input_reports = stats.input_reports,
+        .hid_busy_nanoseconds = stats.hid_busy_nanoseconds,
+        .usb_link_speed_bps = stats.usb_link_speed_bps,
+        .reply_latency_average_ms = stats.reply_latency_average_ms,
+        .reply_latency_median_ms = stats.reply_latency_median_ms,
+        .reply_latency_p99_ms = stats.reply_latency_p99_ms,
+        .reply_latency_samples = stats.reply_latency_samples,
+        .usb_vendor_id = stats.usb_vendor_id,
+        .usb_product_id = stats.usb_product_id,
+        .hid_report_size = stats.hid_report_size,
+        .left_segments = @intCast(meter.segmentsForDbfs(current.left_dbfs)),
+        .right_segments = @intCast(meter.segmentsForDbfs(current.right_dbfs)),
+        .red = color.red,
+        .green = color.green,
+        .blue = color.blue,
+    };
     return 0;
 }
 

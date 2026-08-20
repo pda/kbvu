@@ -10,10 +10,11 @@ repository; output cycling relies on remapping the knob click to F13.
 ## Side-light VU meter
 
 A first-party Core Audio process tap captures the global stereo output mix and
-renders it on the keyboard's side bars at 20 Hz. Each bar fills upward with the
+renders it on the keyboard's side bars at 30 Hz. Each bar fills upward with the
 volume of its channel, and the shared colour runs from cyan through yellow to
-saturated red as the mix becomes more bass-heavy. Quitting the app restores the
-keyboard's complete pre-run lighting state.
+saturated red as the mix becomes more bass-heavy. Deadline-based scheduling
+keeps frame starts on that cadence instead of adding a full interval after HID
+work. Quitting the app restores the keyboard's complete pre-run lighting state.
 
 Stock firmware exposes the side LEDs to the host only as a single whole-zone
 effect, so per-LED control requires a four-edit patch to official Air75 V3 ANSI
